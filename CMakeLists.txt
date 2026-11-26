@@ -1007,6 +1007,7 @@ add_library(mixxx-lib STATIC EXCLUDE_FROM_ALL
   src/library/autodj/mix/mixtransition.cpp
   src/library/autodj/mix/mixwaveformview.cpp
   src/library/online/dlgonlinesearch.cpp
+  src/library/online/onlinebpmdetector.cpp
   src/library/online/onlinefeature.cpp
   src/library/rekordbox/rekordboxfeature.cpp
   src/library/rhythmbox/rhythmboxfeature.cpp

@@ -1,7 +1,9 @@
 #include "library/online/dlgonlinesearch.h"
 
+#include <QCheckBox>
 #include <QComboBox>
 #include <QCoreApplication>
+#include <QSpinBox>
 #include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -19,6 +21,7 @@
 #include <QVBoxLayout>
 
 #include "library/library.h"
+#include "library/online/onlinebpmdetector.h"
 #include "library/trackcollectionmanager.h"
 #include "moc_dlgonlinesearch.cpp"
 #include "track/track.h"
@@ -35,9 +38,28 @@ const ConfigKey kYtDlpPathKey(kConfigGroup, QStringLiteral("YtDlpPath"));
 const ConfigKey kFfmpegPathKey(kConfigGroup, QStringLiteral("FfmpegPath"));
 const ConfigKey kDownloadDirKey(kConfigGroup, QStringLiteral("DownloadDir"));
 const ConfigKey kSourceKey(kConfigGroup, QStringLiteral("Source"));
+const ConfigKey kDetectBpmKey(kConfigGroup, QStringLiteral("DetectBpm"));
 
 constexpr int kMaxResults = 25;
 constexpr int kUrlRole = Qt::UserRole;
+// Numeric value used for sorting (BPM, duration) and for the BPM filter.
+constexpr int kSortRole = Qt::UserRole + 1;
+// BPM states stored in kSortRole of the BPM column.
+constexpr double kBpmPending = -2.0;
+constexpr double kBpmUnknown = -1.0;
+
+/// Table item that sorts by its numeric kSortRole value.
+class NumericItem : public QTableWidgetItem {
+  public:
+    NumericItem(const QString& text, double value)
+            : QTableWidgetItem(text) {
+        setData(kSortRole, value);
+        setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    }
+    bool operator<(const QTableWidgetItem& other) const override {
+        return data(kSortRole).toDouble() < other.data(kSortRole).toDouble();
+    }
+};
 
 const QString kFileMarker = QStringLiteral("MIXXXFILE=");
 const QString kProgressMarker = QStringLiteral("MIXXXPROGRESS=");
@@ -133,10 +155,47 @@ DlgOnlineSearch::DlgOnlineSearch(
     pSearchRow->addWidget(m_pQueryEdit, 1);
     pSearchRow->addWidget(m_pSearchButton);
 
+    // --- BPM ---
+    m_pBpmDetector = new OnlineBpmDetector(this);
+    connect(m_pBpmDetector,
+            &OnlineBpmDetector::bpmDetected,
+            this,
+            &DlgOnlineSearch::slotBpmDetected);
+    m_pDetectBpm = new QCheckBox(tr("Detect BPM"), this);
+    m_pDetectBpm->setToolTip(
+            tr("Estimate the BPM of each result from a short excerpt.\n"
+               "Takes a few seconds per result; Mixxx analyzes the exact BPM\n"
+               "once a track is downloaded."));
+    m_pDetectBpm->setChecked(m_pConfig->getValue(kDetectBpmKey, true));
+    connect(m_pDetectBpm, &QCheckBox::toggled, this, [this](bool checked) {
+        m_pConfig->setValue(kDetectBpmKey, checked);
+    });
+    auto makeBpmSpin = [this]() {
+        auto* pSpin = new QSpinBox(this);
+        pSpin->setRange(0, 250);
+        pSpin->setSpecialValueText(tr("any"));
+        pSpin->setKeyboardTracking(false);
+        connect(pSpin,
+                QOverload<int>::of(&QSpinBox::valueChanged),
+                this,
+                &DlgOnlineSearch::applyBpmFilter);
+        return pSpin;
+    };
+    m_pBpmMin = makeBpmSpin();
+    m_pBpmMax = makeBpmSpin();
+    auto* pBpmRow = new QHBoxLayout();
+    pBpmRow->addWidget(m_pDetectBpm);
+    pBpmRow->addSpacing(16);
+    pBpmRow->addWidget(new QLabel(tr("BPM from"), this));
+    pBpmRow->addWidget(m_pBpmMin);
+    pBpmRow->addWidget(new QLabel(tr("to"), this));
+    pBpmRow->addWidget(m_pBpmMax);
+    pBpmRow->addStretch(1);
+
     // --- results ---
     m_pResults = new QTableWidget(0, kColCount, this);
     m_pResults->setHorizontalHeaderLabels(
-            {tr("Title"), tr("Uploader"), tr("Duration"), tr("Status")});
+            {tr("Title"), tr("Uploader"), tr("BPM"), tr("Duration"), tr("Status")});
     m_pResults->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_pResults->setSelectionMode(QAbstractItemView::ExtendedSelection);
     m_pResults->setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -146,6 +205,7 @@ DlgOnlineSearch::DlgOnlineSearch(
     QHeaderView* pHeader = m_pResults->horizontalHeader();
     pHeader->setSectionResizeMode(kColTitle, QHeaderView::Stretch);
     pHeader->setSectionResizeMode(kColUploader, QHeaderView::Interactive);
+    pHeader->setSectionResizeMode(kColBpm, QHeaderView::ResizeToContents);
     pHeader->setSectionResizeMode(kColDuration, QHeaderView::ResizeToContents);
     pHeader->setSectionResizeMode(kColStatus, QHeaderView::Interactive);
     m_pResults->setColumnWidth(kColUploader, 200);
@@ -190,6 +250,7 @@ DlgOnlineSearch::DlgOnlineSearch(
     auto* pLayout = new QVBoxLayout(this);
     pLayout->setContentsMargins(4, 4, 4, 4);
     pLayout->addLayout(pSearchRow);
+    pLayout->addLayout(pBpmRow);
     pLayout->addWidget(m_pResults, 1);
     pLayout->addLayout(pActionRow);
     pLayout->addWidget(m_pStatusLabel);
@@ -299,6 +360,9 @@ void DlgOnlineSearch::slotSearch() {
         m_pSearchProcess->deleteLater();
     }
 
+    m_pBpmDetector->clear();
+    m_pBpmDetector->setTools(ytDlp, ffmpegPath(), processEnvironment());
+    m_pResults->setSortingEnabled(false);
     m_pResults->setRowCount(0);
     m_searchBuffer.clear();
     m_searchError.clear();
@@ -405,8 +469,8 @@ void DlgOnlineSearch::addResultFromJson(const QByteArray& line) {
     if (uploader.isEmpty()) {
         uploader = QUrl(url).path().section('/', 1, 1);
     }
-    const QString duration = formatDuration(
-            obj.value(QStringLiteral("duration")).toDouble());
+    const double durationSeconds = obj.value(QStringLiteral("duration")).toDouble();
+    const QString duration = formatDuration(durationSeconds);
 
     const int row = m_pResults->rowCount();
     m_pResults->insertRow(row);
@@ -415,14 +479,91 @@ void DlgOnlineSearch::addResultFromJson(const QByteArray& line) {
     pTitle->setToolTip(url);
     m_pResults->setItem(row, kColTitle, pTitle);
     m_pResults->setItem(row, kColUploader, new QTableWidgetItem(uploader));
-    m_pResults->setItem(row, kColDuration, new QTableWidgetItem(duration));
+    m_pResults->setItem(row, kColDuration, new NumericItem(duration, durationSeconds));
     m_pResults->setItem(row, kColStatus, new QTableWidgetItem());
+
+    // BPM: from the title ("... 128 BPM") if present, otherwise estimated
+    // from a short excerpt in the background.
+    const double titleBpm = OnlineBpmDetector::bpmFromText(title);
+    if (titleBpm > 0) {
+        m_pResults->setItem(row, kColBpm, new NumericItem(QString::number(titleBpm), titleBpm));
+    } else if (m_pDetectBpm->isChecked()) {
+        m_pResults->setItem(row, kColBpm, new NumericItem(QStringLiteral("..."), kBpmPending));
+        m_pBpmDetector->enqueue(url, durationSeconds);
+    } else {
+        m_pResults->setItem(row, kColBpm, new NumericItem(QString(), kBpmUnknown));
+    }
+    m_pResults->setRowHidden(row, !rowMatchesBpmFilter(row));
+}
+
+void DlgOnlineSearch::slotBpmDetected(const QString& url, double bpm) {
+    for (int row = 0; row < m_pResults->rowCount(); ++row) {
+        QTableWidgetItem* pTitle = m_pResults->item(row, kColTitle);
+        if (!pTitle || pTitle->data(kUrlRole).toString() != url) {
+            continue;
+        }
+        QTableWidgetItem* pBpm = m_pResults->item(row, kColBpm);
+        if (!pBpm) {
+            continue;
+        }
+        if (bpm > 0) {
+            pBpm->setText(QString::number(bpm, 'f', 1));
+            pBpm->setData(kSortRole, bpm);
+            pBpm->setToolTip(tr("Estimated from a 30 second excerpt. Mixxx "
+                                "analyzes the exact BPM after download."));
+        } else {
+            pBpm->setText(bpm < 0 ? tr("mix") : QStringLiteral("?"));
+            pBpm->setData(kSortRole, kBpmUnknown);
+            pBpm->setToolTip(bpm < 0 ? tr("Too long to estimate (probably a DJ mix).")
+                                     : tr("Could not estimate the BPM."));
+        }
+        m_pResults->setRowHidden(row, !rowMatchesBpmFilter(row));
+    }
+}
+
+bool DlgOnlineSearch::rowMatchesBpmFilter(int row) const {
+    const int minBpm = m_pBpmMin->value();
+    const int maxBpm = m_pBpmMax->value();
+    if (minBpm <= 0 && maxBpm <= 0) {
+        return true;
+    }
+    const QTableWidgetItem* pBpm = m_pResults->item(row, kColBpm);
+    const double bpm = pBpm ? pBpm->data(kSortRole).toDouble() : kBpmUnknown;
+    if (bpm == kBpmPending) {
+        return true; // still estimating; decide when it's known
+    }
+    if (bpm <= 0) {
+        return false;
+    }
+    // Accept half / double time too (e.g. 64 or 256 for a 128 filter).
+    for (double candidate : {bpm, bpm * 2.0, bpm / 2.0}) {
+        if ((minBpm <= 0 || candidate >= minBpm - 0.5) &&
+                (maxBpm <= 0 || candidate <= maxBpm + 0.5)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void DlgOnlineSearch::applyBpmFilter() {
+    int visible = 0;
+    for (int row = 0; row < m_pResults->rowCount(); ++row) {
+        const bool show = rowMatchesBpmFilter(row);
+        m_pResults->setRowHidden(row, !show);
+        visible += show ? 1 : 0;
+    }
+    if (m_pBpmMin->value() > 0 || m_pBpmMax->value() > 0) {
+        setStatus(tr("%1 of %2 results match the BPM range.")
+                          .arg(visible)
+                          .arg(m_pResults->rowCount()));
+    }
 }
 
 void DlgOnlineSearch::slotSearchFinished(int exitCode, QProcess::ExitStatus exitStatus) {
     Q_UNUSED(exitCode);
     slotSearchOutput(); // flush remaining output
     m_pSearchButton->setEnabled(true);
+    m_pResults->setSortingEnabled(true);
     const int count = m_pResults->rowCount();
     if (exitStatus != QProcess::NormalExit) {
         setStatus(tr("Search aborted."));

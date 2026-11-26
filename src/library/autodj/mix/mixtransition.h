@@ -29,8 +29,9 @@ struct MixTransition {
         FilterOut, // A sweeps out through a high-pass filter, B fades in clean
         BassSwap,  // classic DJ blend: swap the low end halfway through
         Cut,       // hard cut at the trigger point (no overlap)
+        Overlap,   // both play at full volume for the overlap, then B only
     };
-    static constexpr int kStyleCount = 6;
+    static constexpr int kStyleCount = 7;
 
     enum class Curve {
         Smooth = 0, // S-curve, gentle at both ends
@@ -43,7 +44,7 @@ struct MixTransition {
     double fromTrigger = 0.0;
     double toStart = 0.0;
     double length = 8.0;
-    Style style = Style::Auto;
+    Style style = Style::Fade;
     Curve curve = Curve::Smooth;
     bool syncTempo = true;
 

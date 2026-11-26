@@ -1,6 +1,9 @@
 #include "preferences/dialog/dlgprefdeck.h"
 
+#include <QBoxLayout>
+#include <QCheckBox>
 #include <QDoubleSpinBox>
+#include <QGridLayout>
 
 #include "control/controlobject.h"
 #include "control/controlproxy.h"
@@ -213,6 +216,32 @@ DlgPrefDeck::DlgPrefDeck(QWidget* parent, UserSettingsPointer pConfig)
             ConfigKey(kControlsGroup, QStringLiteral("SetIntroStartAtMainCue")),
             m_bSetIntroStartAtMainCue);
     checkBoxIntroStartMove->setChecked(m_bSetIntroStartAtMainCue);
+
+    // Hotcue latch: on a paused deck, a hotcue press jumps and keeps playing
+    // instead of previewing only while the key is held.
+    m_pHotcueLatchCheckBox = new QCheckBox(
+            tr("Hotcues on a paused deck start playback (don't stop on release)"),
+            checkBoxIntroStartMove->parentWidget());
+    m_pHotcueLatchCheckBox->setToolTip(
+            tr("When off, pressing a hotcue on a paused deck only previews it\n"
+               "while held and jumps back when released (stock Mixxx/CDJ behavior)."));
+    if (QLayout* pLayout = checkBoxIntroStartMove->parentWidget()->layout()) {
+        if (auto* pGrid = qobject_cast<QGridLayout*>(pLayout)) {
+            int row, column, rowSpan, columnSpan;
+            pGrid->getItemPosition(pGrid->indexOf(checkBoxIntroStartMove),
+                    &row,
+                    &column,
+                    &rowSpan,
+                    &columnSpan);
+            pGrid->addWidget(m_pHotcueLatchCheckBox, pGrid->rowCount(), column, 1, columnSpan);
+        } else if (auto* pBox = qobject_cast<QBoxLayout*>(pLayout)) {
+            pBox->insertWidget(pBox->indexOf(checkBoxIntroStartMove) + 1, m_pHotcueLatchCheckBox);
+        } else {
+            pLayout->addWidget(m_pHotcueLatchCheckBox);
+        }
+    }
+    m_pHotcueLatchCheckBox->setChecked(m_pConfig->getValue(
+            ConfigKey(kControlsGroup, QStringLiteral("HotcueLatchWhenStopped")), true));
     connect(checkBoxIntroStartMove,
             &QCheckBox::toggled,
             this,
@@ -444,6 +473,8 @@ DlgPrefDeck::~DlgPrefDeck() {
 void DlgPrefDeck::slotUpdate() {
     checkBoxIntroStartMove->setChecked(m_pConfig->getValue(
             ConfigKey(kControlsGroup, QStringLiteral("SetIntroStartAtMainCue")), false));
+    m_pHotcueLatchCheckBox->setChecked(m_pConfig->getValue(
+            ConfigKey(kControlsGroup, QStringLiteral("HotcueLatchWhenStopped")), true));
 
     slotSetTrackTimeDisplay(m_pControlTrackTimeDisplay->get());
 
@@ -526,6 +557,8 @@ void DlgPrefDeck::slotUpdate() {
 void DlgPrefDeck::slotResetToDefaults() {
     // Track time display mode
     slotSetTrackTimeDisplay(kDefaultPositionDisplayType);
+
+    m_pHotcueLatchCheckBox->setChecked(true);
 
     // Up increases speed.
     checkBoxInvertSpeedSlider->setChecked(kDefaultRateDirectionInverted);
@@ -697,6 +730,8 @@ void DlgPrefDeck::slotLoadWhenDeckPlayingIndexChanged(int comboboxIndex) {
 void DlgPrefDeck::slotApply() {
     m_pConfig->set(ConfigKey(kControlsGroup, QStringLiteral("SetIntroStartAtMainCue")),
             ConfigValue(m_bSetIntroStartAtMainCue));
+    m_pConfig->setValue(ConfigKey(kControlsGroup, QStringLiteral("HotcueLatchWhenStopped")),
+            m_pHotcueLatchCheckBox->isChecked());
 
     double timeDisplay = static_cast<double>(m_timeDisplayMode);
     m_pConfig->set(ConfigKey(kControlsGroup, QStringLiteral("PositionDisplay")),

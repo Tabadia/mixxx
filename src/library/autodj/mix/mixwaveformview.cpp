@@ -436,9 +436,13 @@ void MixWaveformView::paintOverlap(QPainter* pPainter) {
         for (int i = 0; i <= steps; ++i) {
             const double p = static_cast<double>(i) / steps;
             const double t = MixTransition::crossfadePosition(style, m_transition.curve, p);
+            // Volume of each deck with Mixxx's default (additive) crossfader:
+            // both are at full level when the crossfader is centered.
+            const double gainA = t <= 0.5 ? 1.0 : 2.0 * (1.0 - t);
+            const double gainB = t >= 0.5 ? 1.0 : 2.0 * t;
             const double x = x0 + (x1 - x0) * p;
-            const QPointF pointA(x, laneA.bottom() - (1.0 - t) * (laneA.height() - 4) - 2);
-            const QPointF pointB(x, laneB.bottom() - t * (laneB.height() - 4) - 2);
+            const QPointF pointA(x, laneA.bottom() - gainA * (laneA.height() - 4) - 2);
+            const QPointF pointB(x, laneB.bottom() - gainB * (laneB.height() - 4) - 2);
             if (i == 0) {
                 pathA.moveTo(pointA);
                 pathB.moveTo(pointB);

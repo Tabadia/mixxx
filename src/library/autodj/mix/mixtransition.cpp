@@ -111,6 +111,8 @@ QString MixTransition::styleName(Style style) {
         return QObject::tr("Bass Swap");
     case Style::Cut:
         return QObject::tr("Cut");
+    case Style::Overlap:
+        return QObject::tr("Overlap");
     }
     return QString();
 }
@@ -135,6 +137,10 @@ QString MixTransition::styleDescription(Style style) {
                 "through, the basslines swap.");
     case Style::Cut:
         return QObject::tr("Switches instantly at the transition point.");
+    case Style::Overlap:
+        return QObject::tr(
+                "Both tracks play at full volume during the overlap; at the end "
+                "the current track stops and the next one keeps playing.");
     }
     return QString();
 }
@@ -178,6 +184,9 @@ double MixTransition::crossfadePosition(Style effectiveStyle, Curve curve, doubl
         return 0.5 * smoothstep(0.0, 0.45, c) + 0.5 * smoothstep(0.55, 1.0, p);
     case Style::Cut:
         return p >= 0.5 ? 1.0 : 0.0;
+    case Style::Overlap:
+        // Crossfader centered: both decks at full volume (default curve).
+        return p >= 1.0 ? 1.0 : 0.5;
     case Style::Auto:
     case Style::Fade:
     case Style::Rise:
@@ -380,6 +389,7 @@ double MixEffectDriver::apply(double progress) {
         return c;
     }
     case MixTransition::Style::Cut:
+    case MixTransition::Style::Overlap:
     case MixTransition::Style::Auto: // resolved before begin()
     case MixTransition::Style::Fade:
         break;

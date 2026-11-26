@@ -1134,6 +1134,16 @@ void CueControl::hotcueActivate(HotcueControl* pControl, double value, HotcueSet
                 default:
                     DEBUG_ASSERT(!"Invalid CueType!");
                 }
+            } else if (m_currentlyPreviewingIndex == Cue::kNoHotCue &&
+                    m_pConfig->getValue(
+                            ConfigKey("[Controls]", "HotcueLatchWhenStopped"), true)) {
+                // pressed during pause, "latch" mode: jump there and keep
+                // playing instead of previewing only while held.
+                if (pCue->getType() == mixxx::CueType::Loop) {
+                    hotcueGotoAndLoop(pControl, value);
+                } else {
+                    hotcueGotoAndPlay(pControl, value);
+                }
             } else {
                 // pressed during pause or preview
                 hotcueActivatePreview(pControl, value);

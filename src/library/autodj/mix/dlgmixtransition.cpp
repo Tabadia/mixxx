@@ -135,8 +135,8 @@ DlgMixTransition::DlgMixTransition(QWidget* pParent,
 
     // --- controls ---
     m_pStyle = new QComboBox(this);
-    for (int i = 0; i < MixTransition::kStyleCount; ++i) {
-        m_pStyle->addItem(MixTransition::styleName(static_cast<MixTransition::Style>(i)), i);
+    for (const auto style : {MixTransition::Style::Fade, MixTransition::Style::Overlap}) {
+        m_pStyle->addItem(MixTransition::styleName(style), static_cast<int>(style));
     }
     m_pStyleDescription = new QLabel(this);
     m_pStyleDescription->setWordWrap(true);
@@ -159,7 +159,10 @@ DlgMixTransition::DlgMixTransition(QWidget* pParent,
     m_pStart = new TimeSpinBox(this);
     m_pStart->setRange(0.0, qMax(1.0, m_pTo->getDuration()));
 
-    m_pSync = new QCheckBox(tr("Sync tempo of the next track"), this);
+    // The volume curve stays at its default; the picker is kept hidden.
+    m_pCurve->hide();
+
+    m_pSync = new QCheckBox(tr("Match BPM (sync B's tempo and beats to A)"), this);
     m_pSnap = new QCheckBox(tr("Snap to beats"), this);
     m_pSnap->setChecked(true);
 
@@ -168,10 +171,9 @@ DlgMixTransition::DlgMixTransition(QWidget* pParent,
     pLengthRow->addWidget(m_pLengthBeats, 1);
 
     auto* pForm = new QFormLayout();
-    pForm->addRow(tr("Style"), m_pStyle);
+    pForm->addRow(tr("Transition"), m_pStyle);
     pForm->addRow(QString(), m_pStyleDescription);
-    pForm->addRow(tr("Volume curve"), m_pCurve);
-    pForm->addRow(tr("Length"), pLengthRow);
+    pForm->addRow(tr("Overlap length"), pLengthRow);
     auto* pForm2 = new QFormLayout();
     pForm2->addRow(tr("Mix out of A at"), m_pTrigger);
     pForm2->addRow(tr("Bring B in from"), m_pStart);
@@ -283,7 +285,8 @@ void DlgMixTransition::updateFromView() {
 void DlgMixTransition::updateControls() {
     const MixTransition& t = m_pView->transition();
     m_updating = true;
-    m_pStyle->setCurrentIndex(m_pStyle->findData(static_cast<int>(t.style)));
+    const int styleIndex = m_pStyle->findData(static_cast<int>(t.style));
+    m_pStyle->setCurrentIndex(styleIndex >= 0 ? styleIndex : 0);
     m_pCurve->setCurrentIndex(m_pCurve->findData(static_cast<int>(t.curve)));
     m_pLength->setValue(t.length);
     m_pTrigger->setValue(t.fromTrigger);
@@ -311,22 +314,18 @@ void DlgMixTransition::updateInfo() {
     QString match;
     if (bpmA > 0 && bpmB > 0) {
         const double diff = (bpmB - bpmA) / bpmA * 100.0;
-        if (MixTransition::bpmsCompatible(bpmA, bpmB, 0.02)) {
-            match = tr("Tempos match.");
-        } else if (MixTransition::bpmsCompatible(bpmA, bpmB)) {
-            match = tr("Tempos are close (%1%). Sync tempo will match them.")
+        if (MixTransition::bpmsCompatible(bpmA, bpmB, 0.005)) {
+            match = tr("BPMs match.");
+        } else if (MixTransition::bpmsCompatible(bpmA, bpmB, 0.10)) {
+            match = tr("BPMs differ by %1%. Match BPM will line them up.")
                             .arg(diff, 0, 'f', 1);
         } else {
-            match = tr("Tempos differ by %1% - a Fade or Cut works best.")
+            match = tr("BPMs differ by %1%. Match BPM will change B's speed a "
+                       "lot; a short Fade may sound better.")
                             .arg(diff, 0, 'f', 1);
         }
     } else {
         match = tr("Analyze both tracks to see BPM, key and beat grid.");
-    }
-    if (t.style == MixTransition::Style::Auto) {
-        match += QStringLiteral("  ") +
-                tr("Auto will use: %1.")
-                        .arg(MixTransition::styleName(t.effectiveStyle(bpmA, bpmB)));
     }
     m_pMatchInfo->setText(match);
 
@@ -382,9 +381,9 @@ MixTransition DlgMixTransition::suggestTransition() const {
                 : 0.0;
     }
 
-    t.style = MixTransition::Style::Auto;
+    t.style = MixTransition::Style::Fade;
     t.curve = MixTransition::Curve::Smooth;
-    t.syncTempo = MixTransition::bpmsCompatible(bpmA, bpmB, 0.08);
+    t.syncTempo = MixTransition::bpmsCompatible(bpmA, bpmB, 0.10);
     return t;
 }
 

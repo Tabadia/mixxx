@@ -11,6 +11,9 @@
 #include "track/track_decl.h"
 
 class Library;
+class OnlineBpmDetector;
+class QCheckBox;
+class QSpinBox;
 class QComboBox;
 class QLabel;
 class QLineEdit;
@@ -59,6 +62,7 @@ class DlgOnlineSearch : public QWidget, public virtual LibraryView {
     enum Column {
         kColTitle = 0,
         kColUploader,
+        kColBpm,
         kColDuration,
         kColStatus,
         kColCount,
@@ -70,6 +74,9 @@ class DlgOnlineSearch : public QWidget, public virtual LibraryView {
     void setStatus(const QString& text);
     void addResultFromJson(const QByteArray& line);
     void onDownloadedFile(const DownloadJob& job, const QString& filePath);
+    void slotBpmDetected(const QString& url, double bpm);
+    void applyBpmFilter();
+    bool rowMatchesBpmFilter(int row) const;
 
     QString ytDlpPath() const;
     QString ffmpegPath() const;
@@ -88,6 +95,10 @@ class DlgOnlineSearch : public QWidget, public virtual LibraryView {
     QPushButton* m_pDeck2Button;
     QPushButton* m_pFolderButton;
     QLabel* m_pStatusLabel;
+    QCheckBox* m_pDetectBpm;
+    QSpinBox* m_pBpmMin;
+    QSpinBox* m_pBpmMax;
+    OnlineBpmDetector* m_pBpmDetector;
 
     QPointer<QProcess> m_pSearchProcess;
     QByteArray m_searchBuffer;
