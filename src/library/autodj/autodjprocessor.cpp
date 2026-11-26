@@ -1601,7 +1601,8 @@ void AutoDJProcessor::refreshTransition() {
         return;
     }
     DeckAttributes* pToDeck = getOtherDeck(pFromDeck);
-    if (!pToDeck || pToDeck->isPlaying()) {
+    if (!pToDeck || pToDeck->isPlaying() || pToDeck->loading ||
+            !pToDeck->getLoadedTrack() || !pFromDeck->getLoadedTrack()) {
         return;
     }
     calculateTransition(pFromDeck, pToDeck, true);
