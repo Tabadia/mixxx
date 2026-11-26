@@ -150,6 +150,8 @@ DlgOnlineSearch::DlgOnlineSearch(
     connect(m_pQueryEdit, &QLineEdit::returnPressed, this, &DlgOnlineSearch::slotSearch);
 
     m_pSearchButton = new QPushButton(tr("Search"), this);
+    // Skins can style the main actions via QPushButton[primary="true"].
+    m_pSearchButton->setProperty("primary", true);
     connect(m_pSearchButton, &QPushButton::clicked, this, &DlgOnlineSearch::slotSearch);
 
     auto* pSearchRow = new QHBoxLayout();
@@ -204,6 +206,10 @@ DlgOnlineSearch::DlgOnlineSearch(
     m_pResults->verticalHeader()->setVisible(false);
     m_pResults->setAlternatingRowColors(true);
     m_pResults->setWordWrap(false);
+    m_pResults->setShowGrid(false);
+    m_pResults->verticalHeader()->setDefaultSectionSize(28);
+    m_pResults->horizontalHeader()->setDefaultAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    m_pResults->horizontalHeader()->setHighlightSections(false);
     QHeaderView* pHeader = m_pResults->horizontalHeader();
     pHeader->setSectionResizeMode(kColTitle, QHeaderView::Stretch);
     pHeader->setSectionResizeMode(kColUploader, QHeaderView::Interactive);
@@ -219,8 +225,9 @@ DlgOnlineSearch::DlgOnlineSearch(
 
     // --- action bar ---
     m_pDownloadButton = new QPushButton(tr("Download to Library"), this);
-    m_pDeck1Button = new QPushButton(tr("Download -> Deck 1"), this);
-    m_pDeck2Button = new QPushButton(tr("Download -> Deck 2"), this);
+    m_pDownloadButton->setProperty("primary", true);
+    m_pDeck1Button = new QPushButton(tr("Download to Deck 1"), this);
+    m_pDeck2Button = new QPushButton(tr("Download to Deck 2"), this);
     m_pFolderButton = new QPushButton(tr("Download Folder..."), this);
     connect(m_pDownloadButton,
             &QPushButton::clicked,
@@ -240,6 +247,7 @@ DlgOnlineSearch::DlgOnlineSearch(
             &DlgOnlineSearch::slotChooseFolder);
 
     m_pStatusLabel = new QLabel(this);
+    m_pStatusLabel->setObjectName(QStringLiteral("OnlineSearchStatus"));
     m_pStatusLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
 
     auto* pActionRow = new QHBoxLayout();
@@ -250,7 +258,7 @@ DlgOnlineSearch::DlgOnlineSearch(
     pActionRow->addWidget(m_pFolderButton);
 
     auto* pLayout = new QVBoxLayout(this);
-    pLayout->setContentsMargins(4, 4, 4, 4);
+    pLayout->setContentsMargins(6, 6, 6, 8);
     pLayout->addLayout(pSearchRow);
     pLayout->addLayout(pBpmRow);
     pLayout->addWidget(m_pResults, 1);

@@ -5,6 +5,9 @@
 #include <QDebug>
 #include <QFileDialog>
 #include <QOpenGLContext>
+#include <QPixmap>
+#include <QScreen>
+#include <QTimer>
 #include <QUrl>
 
 #if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
@@ -403,6 +406,46 @@ void MixxxMainWindow::initialize() {
     // Show the menubar after the launch image is replaced by the skin widget,
     // otherwise it would shift the launch image shortly before the skin is visible.
     m_pMenuBar->show();
+
+    // Developer aid for skin work: MIXXX_SCREENSHOT=<file.png> saves a
+    // screenshot of this window after MIXXX_SCREENSHOT_DELAY ms (default
+    // 8000), optionally resized to MIXXX_SCREENSHOT_SIZE ("1280x800"), and
+    // quits afterwards if MIXXX_SCREENSHOT_QUIT is set.
+    if (qEnvironmentVariableIsSet("MIXXX_SCREENSHOT")) {
+        const QString sizeSpec = qEnvironmentVariable("MIXXX_SCREENSHOT_SIZE");
+        if (sizeSpec.contains('x')) {
+            showNormal();
+            resize(sizeSpec.section('x', 0, 0).toInt(), sizeSpec.section('x', 1, 1).toInt());
+            move(0, 0);
+        }
+        bool ok = false;
+        int delayMs = qEnvironmentVariableIntValue("MIXXX_SCREENSHOT_DELAY", &ok);
+        if (!ok) {
+            delayMs = 8000;
+        }
+        // MIXXX_SCREENSHOT_VIEW=<library view name> (e.g. "OnlineSearch",
+        // "Auto DJ") switches the library view shortly before the grab.
+        const QString view = qEnvironmentVariable("MIXXX_SCREENSHOT_VIEW");
+        if (!view.isEmpty()) {
+            QTimer::singleShot(qMax(0, delayMs - 2500), this, [this, view]() {
+                m_pCoreServices->getLibrary()->slotSwitchToView(view);
+            });
+        }
+        QTimer::singleShot(delayMs, this, [this]() {
+            raise();
+            activateWindow();
+            QScreen* pScreen = screen();
+            // Grabbing the on-screen window also captures OpenGL waveforms.
+            const QPixmap pixmap = pScreen
+                    ? pScreen->grabWindow(winId())
+                    : grab();
+            const QString path = qEnvironmentVariable("MIXXX_SCREENSHOT");
+            qInfo() << "Saving screenshot to" << path << pixmap.save(path);
+            if (qEnvironmentVariableIsSet("MIXXX_SCREENSHOT_QUIT")) {
+                close();
+            }
+        });
+    }
 
     // The launch image widget is automatically disposed, but we still have a
     // pointer to it.

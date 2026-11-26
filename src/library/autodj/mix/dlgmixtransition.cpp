@@ -108,6 +108,7 @@ DlgMixTransition::DlgMixTransition(QWidget* pParent,
           m_previewState(PreviewState::Idle),
           m_previewTicks(0) {
     setWindowTitle(tr("Mix Transition"));
+    setObjectName(QStringLiteral("DlgMixTransition"));
     setAttribute(Qt::WA_DeleteOnClose);
     resize(980, 560);
 
@@ -193,6 +194,7 @@ DlgMixTransition::DlgMixTransition(QWidget* pParent,
     m_pRemove = new QPushButton(tr("Remove"), this);
     auto* pCancel = new QPushButton(tr("Cancel"), this);
     auto* pSave = new QPushButton(tr("Save"), this);
+    pSave->setProperty("primary", true);
     pSave->setDefault(true);
     m_pStatus = new QLabel(this);
 
