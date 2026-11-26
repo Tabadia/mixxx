@@ -177,7 +177,8 @@ class AutoDJProcessor : public QObject {
                     UserSettingsPointer pConfig,
                     PlayerManagerInterface* pPlayerManager,
                     TrackCollectionManager* pTrackCollectionManager,
-                    int iAutoDJPlaylistId);
+                    int iAutoDJPlaylistId,
+                    MixTransitionStore* pMixStore = nullptr);
     virtual ~AutoDJProcessor() = default;
 
     AutoDJState getState() const {

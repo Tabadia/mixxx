@@ -29,6 +29,8 @@ class PlaylistFeature;
 class RecordingManager;
 class SidebarModel;
 class TrackCollectionManager;
+class MixTransitionStore;
+class MixTransitionPlayer;
 class WSearchLineEdit;
 class WLibrarySidebar;
 class WLibrary;
@@ -61,6 +63,15 @@ class Library: public QObject {
     }
 
     TrackCollectionManager* trackCollectionManager() const;
+
+    /// Saved per-pair transitions ("Mix") and the player that fires them
+    /// while DJing by hand. Shared by Auto DJ and the transition panel.
+    MixTransitionStore* mixTransitionStore() const {
+        return m_pMixTransitionStore;
+    }
+    MixTransitionPlayer* mixTransitionPlayer() const {
+        return m_pMixTransitionPlayer;
+    }
 
     TrackAnalysisScheduler::Pointer createTrackAnalysisScheduler(
             int numWorkerThreads,
@@ -161,6 +172,8 @@ class Library: public QObject {
     const mixxx::DbConnectionPoolPtr m_pDbConnectionPool;
 
     const QPointer<TrackCollectionManager> m_pTrackCollectionManager;
+    MixTransitionStore* m_pMixTransitionStore;
+    MixTransitionPlayer* m_pMixTransitionPlayer;
 
     parented_ptr<SidebarModel> m_pSidebarModel;
     parented_ptr<LibraryControl> m_pLibraryControl;

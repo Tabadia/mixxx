@@ -48,6 +48,7 @@
       <attribute persist="true" config_key="[Modern],show_hotcues">1</attribute>
       <attribute persist="true" config_key="[Modern],show_8_hotcues">1</attribute>
       <attribute persist="true" config_key="[Modern],show_intro_outro_cues">1</attribute>
+      <attribute persist="true" config_key="[Modern],show_transition_panel">1</attribute>
       <attribute persist="true" config_key="[Modern],show_loop_controls">1</attribute>
       <attribute persist="true" config_key="[Modern],show_beatjump_controls">1</attribute>
       <attribute persist="true" config_key="[Skin],show_spinnies">1</attribute>
@@ -399,6 +400,23 @@
                             <BindProperty>visible</BindProperty>
                           </Connection>
                         </WidgetGroup><!-- ToolbarDeckSpacer -->
+
+                        <WidgetGroup><!-- Transition editor for deck 1 / deck 2 -->
+                          <ObjectName>MixTransitionContainer</ObjectName>
+                          <Layout>vertical</Layout>
+                          <SizePolicy>me,min</SizePolicy>
+                          <Children>
+                            <MixTransitionPanel>
+                              <SizePolicy>me,f</SizePolicy>
+                              <MinimumSize>300,156</MinimumSize>
+                              <MaximumSize>-1,156</MaximumSize>
+                            </MixTransitionPanel>
+                          </Children>
+                          <Connection>
+                            <ConfigKey persist="true">[Modern],show_transition_panel</ConfigKey>
+                            <BindProperty>visible</BindProperty>
+                          </Connection>
+                        </WidgetGroup>
 
                         <WidgetGroup>
                           <Layout>horizontal</Layout>

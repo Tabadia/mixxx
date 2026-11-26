@@ -5,7 +5,6 @@
 #include <QMessageBox>
 
 #include "controllers/keyboard/keyboardeventfilter.h"
-#include "library/autodj/mix/dlgmixtransition.h"
 #include "library/library.h"
 #include "library/playlisttablemodel.h"
 #include "moc_dlgautodj.cpp"
@@ -35,8 +34,7 @@ DlgAutoDJ::DlgAutoDJ(WLibrary* parent,
                   parent->getTrackTableBackgroundColorOpacity())),
           m_bShowButtonText(parent->getShowButtonText()),
           m_pAutoDJTableModel(nullptr),
-          m_pMixModeButton(nullptr),
-          m_pEditTransitionButton(nullptr) {
+          m_pMixModeButton(nullptr) {
     setupUi(this);
 
     // "Mix": saved per-pair transitions (see library/autodj/mix).
@@ -49,24 +47,19 @@ DlgAutoDJ::DlgAutoDJ(WLibrary* parent,
             tr("Mix mode\n"
                "\n"
                "When on, Auto DJ uses the transitions you saved between pairs of\n"
-               "tracks (style, timing, length). Pairs without a saved transition\n"
-               "use the regular fade mode."));
-    m_pEditTransitionButton = new QPushButton(tr("Edit Transition"), LibraryFeatureControls);
-    m_pEditTransitionButton->setObjectName(QStringLiteral("pushButtonEditTransition"));
-    m_pEditTransitionButton->setFocusPolicy(Qt::NoFocus);
-    m_pEditTransitionButton->setToolTip(
-            tr("Edit the transition from the selected track into the next one\n"
-               "(or between the two selected tracks)."));
-    {
-        const int index = horizontalLayout->indexOf(pushButtonRepeatPlaylist);
-        horizontalLayout->insertWidget(index + 1, m_pMixModeButton);
-        horizontalLayout->insertWidget(index + 2, m_pEditTransitionButton);
-    }
+               "tracks in the Transition panel. Pairs without a saved transition\n"
+               "use the regular fade mode. Same switch as the panel's Armed button."));
+    horizontalLayout->insertWidget(
+            horizontalLayout->indexOf(pushButtonRepeatPlaylist) + 1, m_pMixModeButton);
     connect(m_pMixModeButton, &QPushButton::toggled, this, &DlgAutoDJ::slotMixModeToggled);
-    connect(m_pEditTransitionButton,
-            &QPushButton::clicked,
-            this,
-            &DlgAutoDJ::slotEditMixTransition);
+    connect(m_pAutoDJProcessor->mixTransitionStore(),
+            &MixTransitionStore::enabledChanged,
+            m_pMixModeButton,
+            [this](bool on) {
+                if (m_pMixModeButton->isChecked() != on) {
+                    m_pMixModeButton->setChecked(on);
+                }
+            });
 
     m_pTrackTableView->installEventFilter(pKeyboard);
 
@@ -383,47 +376,6 @@ void DlgAutoDJ::slotRepeatPlaylistChanged(bool checked) {
 void DlgAutoDJ::slotMixModeToggled(bool enabled) {
     m_pAutoDJProcessor->mixTransitionStore()->setEnabled(enabled);
     m_pAutoDJProcessor->refreshTransition();
-}
-
-void DlgAutoDJ::slotEditMixTransition() {
-    QModelIndexList rows = m_pTrackTableView->selectionModel()->selectedRows();
-    std::sort(rows.begin(), rows.end(), [](const QModelIndex& a, const QModelIndex& b) {
-        return a.row() < b.row();
-    });
-    QModelIndex fromIndex;
-    QModelIndex toIndex;
-    if (rows.size() == 1) {
-        fromIndex = rows.first();
-        toIndex = m_pAutoDJTableModel->index(fromIndex.row() + 1, 0);
-    } else if (rows.size() == 2) {
-        fromIndex = rows.at(0);
-        toIndex = rows.at(1);
-    }
-    const TrackPointer pFrom = fromIndex.isValid()
-            ? m_pAutoDJTableModel->getTrack(fromIndex)
-            : TrackPointer();
-    const TrackPointer pTo = toIndex.isValid()
-            ? m_pAutoDJTableModel->getTrack(toIndex)
-            : TrackPointer();
-    if (!pFrom || !pTo) {
-        QMessageBox::information(this,
-                tr("Edit Transition"),
-                tr("Select a track that has another track after it in the Auto DJ "
-                   "queue, or select exactly two tracks."));
-        return;
-    }
-    if (pFrom == pTo) {
-        QMessageBox::information(this,
-                tr("Edit Transition"),
-                tr("A track can't transition into itself."));
-        return;
-    }
-    auto* pDialog = new DlgMixTransition(this, m_pAutoDJProcessor, pFrom, pTo);
-    connect(pDialog,
-            &DlgMixTransition::loadTrackToPlayer,
-            this,
-            &DlgAutoDJ::loadTrackToPlayer);
-    pDialog->show();
 }
 
 void DlgAutoDJ::updateSelectionInfo() {

@@ -60,7 +60,8 @@ AutoDJFeature::AutoDJFeature(Library* pLibrary,
             m_pConfig,
             pPlayerManager,
             pLibrary->trackCollectionManager(),
-            m_iAutoDJPlaylistId);
+            m_iAutoDJPlaylistId,
+            pLibrary->mixTransitionStore());
 
     // Connect loadTrackToPlayer signal as a queued connection to make sure all callbacks of a
     // previous load attempt have been called #10504.

@@ -45,7 +45,6 @@ class DlgAutoDJ : public QWidget, public Ui::DlgAutoDJ, public LibraryView {
     void updateSelectionInfo();
     void slotTransitionModeChanged(int comboboxIndex);
     void slotRepeatPlaylistChanged(bool checked);
-    void slotEditMixTransition();
     void slotMixModeToggled(bool enabled);
 
   signals:
@@ -69,7 +68,6 @@ class DlgAutoDJ : public QWidget, public Ui::DlgAutoDJ, public LibraryView {
     PlaylistTableModel* m_pAutoDJTableModel;
 
     QPushButton* m_pMixModeButton;
-    QPushButton* m_pEditTransitionButton;
 
     QString m_enableBtnTooltip;
     QString m_disableBtnTooltip;

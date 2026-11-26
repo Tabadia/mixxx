@@ -111,7 +111,8 @@ AutoDJProcessor::AutoDJProcessor(
         UserSettingsPointer pConfig,
         PlayerManagerInterface* pPlayerManager,
         TrackCollectionManager* pTrackCollectionManager,
-        int iAutoDJPlaylistId)
+        int iAutoDJPlaylistId,
+        MixTransitionStore* pMixStore)
         : QObject(pParent),
           m_pConfig(pConfig),
           m_pAutoDJTableModel(nullptr),
@@ -126,7 +127,7 @@ AutoDJProcessor::AutoDJProcessor(
           m_addRandomTrack(ConfigKey(kControlGroup, QStringLiteral("add_random_track"))),
           m_fadeNow(ConfigKey(kControlGroup, QStringLiteral("fade_now"))),
           m_enabledAutoDJ(ConfigKey(kControlGroup, QStringLiteral("enabled"))),
-          m_pMixStore(new MixTransitionStore(pConfig, this)) {
+          m_pMixStore(pMixStore ? pMixStore : new MixTransitionStore(pConfig, this)) {
     m_pAutoDJTableModel = make_parented<PlaylistTableModel>(
             this, pTrackCollectionManager, "mixxx.db.model.autodj");
     m_pAutoDJTableModel->selectPlaylist(iAutoDJPlaylistId);
@@ -815,19 +816,20 @@ void AutoDJProcessor::playerPositionChanged(DeckAttributes* pAttributes,
                 if (thisDeck->mixTransition) {
                     // Start the Mix automation (tempo sync, EQ, filters)
                     // before the incoming track becomes audible.
-                    const TrackPointer pFromTrack = thisDeck->getLoadedTrack();
+                    // The fader lines do the fading, so center the
+                    // crossfader (both decks audible with the default curve).
                     const TrackPointer pToTrack = otherDeck->getLoadedTrack();
+                    setCrossfader(0.0);
                     m_mixDriver.begin(thisDeck->group,
                             otherDeck->group,
                             *thisDeck->mixTransition,
-                            thisDeck->mixTransition->effectiveStyle(
-                                    pFromTrack ? pFromTrack->getBpm() : 0.0,
-                                    pToTrack ? pToTrack->getBpm() : 0.0));
+                            pToTrack ? pToTrack->getBpm() : 0.0);
                 }
 
                 if (!otherDeckPlaying) {
                     otherDeck->play();
                 }
+                m_mixDriver.started();
 
                 if (thisDeck->fadeBeginPos >= thisDeck->fadeEndPos) {
                     setCrossfader(thisDeck->isLeft() ? 1.0 : -1.0);
@@ -881,12 +883,14 @@ void AutoDJProcessor::playerPositionChanged(DeckAttributes* pAttributes,
                 // Mix transition: the shape is fully determined by the
                 // progress, so set the crossfader to an absolute position.
                 if (transitionStep > 0.0) {
-                    const double t = transitionProgress >= 1.0
-                            ? 1.0
-                            : m_mixDriver.apply(transitionProgress);
-                    setCrossfader(transitionProgress >= 1.0
-                                    ? crossfaderTarget
-                                    : mixCrossfaderValue(thisDeck, t));
+                    if (transitionProgress >= 1.0) {
+                        // Moving the crossfader to the target ends the
+                        // transition on the next callback.
+                        setCrossfader(crossfaderTarget);
+                    } else {
+                        m_mixDriver.apply(transitionProgress);
+                        setCrossfader(0.0);
+                    }
                 }
             } else if (transitionStep > 0.0) {
                 // We have made progress.
@@ -1566,9 +1570,7 @@ bool AutoDJProcessor::applyMixTransition(DeckAttributes* pFromDeck,
             transition->toStart >= toDuration - kMinimumTrackDurationSec) {
         return false;
     }
-    double length = transition->style == MixTransition::Style::Cut
-            ? 0.0
-            : transition->length;
+    double length = transition->length;
     length = math_min(length, fromDuration - trigger);
     length = math_min(length, toDuration - transition->toStart);
 
@@ -1580,9 +1582,7 @@ bool AutoDJProcessor::applyMixTransition(DeckAttributes* pFromDeck,
         pToDeck->fadeBeginPos = toDuration;
     }
     pFromDeck->mixTransition = transition;
-    qDebug() << "Auto DJ: using Mix transition"
-             << MixTransition::styleName(transition->style) << "at" << trigger
-             << "s for" << length << "s";
+    qDebug() << "Auto DJ: using Mix transition at" << trigger << "s for" << length << "s";
     return true;
 }
 

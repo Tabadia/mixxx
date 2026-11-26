@@ -2,10 +2,11 @@
 
 #include <QDir>
 #include <QFile>
-#include <QFileInfo>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QSaveFile>
-#include <QtMath>
+#include <algorithm>
+#include <cmath>
 
 #include "control/controlproxy.h"
 #include "moc_mixtransition.cpp"
@@ -19,13 +20,24 @@ const mixxx::Logger kLogger("MixTransition");
 const QString kFileName = QStringLiteral("mix_transitions.json");
 const ConfigKey kMixEnabledKey(QStringLiteral("[Auto DJ]"), QStringLiteral("MixMode"));
 
-// Quick effect "Filter" super knob: 0.5 = neutral, <0.5 low-pass, >0.5 high-pass
-constexpr double kFilterNeutral = 0.5;
-constexpr double kFilterHighPassMax = 0.92;
-constexpr double kFilterLowPassMax = 0.1;
+const char* const kLaneKeys[kMixLaneCount] = {
+        "VolumeA",
+        "VolumeB",
+        "LowA",
+        "MidA",
+        "HighA",
+        "LowB",
+        "MidB",
+        "HighB",
+        "FilterA",
+        "FilterB",
+        "Tempo",
+};
 
+const QString kVolume = QStringLiteral("volume");
+const QString kBpm = QStringLiteral("bpm");
+const QString kPhaseSync = QStringLiteral("beatsync_phase");
 const QString kFilterItem = QStringLiteral("super1");
-const QString kLowEqItem = QStringLiteral("parameter1");
 
 QString quickEffectGroup(const QString& deckGroup) {
     return QStringLiteral("[QuickEffectRack1_%1]").arg(deckGroup);
@@ -35,13 +47,23 @@ QString eqGroup(const QString& deckGroup) {
     return QStringLiteral("[EqualizerRack1_%1_Effect1]").arg(deckGroup);
 }
 
-double clamp01(double v) {
-    return qBound(0.0, v, 1.0);
+/// EQ line value -> gain factor relative to the user's knob:
+/// 0 = kill, 0.5 = unchanged, 1 = x2 (+6 dB).
+double eqFactor(double y) {
+    y = std::clamp(y, 0.0, 1.0);
+    return y <= 0.5 ? 2.0 * y : 1.0 + (y - 0.5) * 2.0;
 }
 
-double smoothstep(double edge0, double edge1, double x) {
-    const double t = clamp01((x - edge0) / (edge1 - edge0));
-    return t * t * (3.0 - 2.0 * t);
+bool sameLine(const QVector<MixPoint>& a, const QVector<MixPoint>& b) {
+    if (a.size() != b.size()) {
+        return false;
+    }
+    for (int i = 0; i < a.size(); ++i) {
+        if (std::fabs(a[i].x - b[i].x) > 1e-4 || std::fabs(a[i].y - b[i].y) > 1e-4) {
+            return false;
+        }
+    }
+    return true;
 }
 
 } // anonymous namespace
@@ -50,14 +72,107 @@ double smoothstep(double edge0, double edge1, double x) {
 // MixTransition
 // ---------------------------------------------------------------------------
 
+QVector<MixPoint> MixTransition::defaultLane(MixLane lane) const {
+    switch (lane) {
+    case MixLane::VolumeA:
+        return {{0.0, 1.0}, {1.0, 0.0}};
+    case MixLane::VolumeB:
+        return {{0.0, 0.0}, {1.0, 1.0}};
+    case MixLane::Tempo:
+        return tempoRamp ? QVector<MixPoint>{{0.0, 0.0}, {1.0, 1.0}}
+                         : QVector<MixPoint>{{0.0, 0.0}, {1.0, 0.0}};
+    default:
+        return {{0.0, 0.5}, {1.0, 0.5}};
+    }
+}
+
+QVector<MixPoint> MixTransition::lane(MixLane lane) const {
+    const auto it = lanes.constFind(static_cast<int>(lane));
+    if (it == lanes.constEnd() || it->size() < 2) {
+        return defaultLane(lane);
+    }
+    return *it;
+}
+
+void MixTransition::setLane(MixLane lane, const QVector<MixPoint>& points) {
+    QVector<MixPoint> sorted = points;
+    std::sort(sorted.begin(), sorted.end(), [](const MixPoint& a, const MixPoint& b) {
+        return a.x < b.x;
+    });
+    for (MixPoint& p : sorted) {
+        p.x = std::clamp(p.x, 0.0, 1.0);
+        p.y = std::clamp(p.y, 0.0, 1.0);
+    }
+    if (sorted.size() < 2 || sameLine(sorted, defaultLane(lane))) {
+        lanes.remove(static_cast<int>(lane));
+    } else {
+        lanes.insert(static_cast<int>(lane), sorted);
+    }
+}
+
+bool MixTransition::isLaneActive(MixLane lane) const {
+    const auto it = lanes.constFind(static_cast<int>(lane));
+    return it != lanes.constEnd() && it->size() >= 2 && !sameLine(*it, defaultLane(lane));
+}
+
+double MixTransition::evaluate(const QVector<MixPoint>& points, double x) {
+    if (points.isEmpty()) {
+        return 0.0;
+    }
+    if (x <= points.first().x) {
+        return points.first().y;
+    }
+    for (int i = 1; i < points.size(); ++i) {
+        const MixPoint& a = points[i - 1];
+        const MixPoint& b = points[i];
+        if (x <= b.x) {
+            const double span = b.x - a.x;
+            if (span <= 1e-9) {
+                return b.y;
+            }
+            return a.y + (b.y - a.y) * (x - a.x) / span;
+        }
+    }
+    return points.last().y;
+}
+
+QString MixTransition::laneName(MixLane lane) {
+    return QString::fromLatin1(kLaneKeys[static_cast<int>(lane)]);
+}
+
+bool MixTransition::bpmsCompatible(double bpmA, double bpmB, double tolerance) {
+    if (bpmA <= 0 || bpmB <= 0) {
+        return false;
+    }
+    for (double factor : {1.0, 2.0, 0.5}) {
+        if (std::fabs(bpmA - bpmB * factor) / bpmA <= tolerance) {
+            return true;
+        }
+    }
+    return false;
+}
+
 QJsonObject MixTransition::toJson() const {
     QJsonObject obj;
+    obj.insert(QStringLiteral("version"), 2);
     obj.insert(QStringLiteral("fromTrigger"), fromTrigger);
     obj.insert(QStringLiteral("toStart"), toStart);
     obj.insert(QStringLiteral("length"), length);
-    obj.insert(QStringLiteral("style"), static_cast<int>(style));
-    obj.insert(QStringLiteral("curve"), static_cast<int>(curve));
-    obj.insert(QStringLiteral("syncTempo"), syncTempo);
+    obj.insert(QStringLiteral("tempoMode"), static_cast<int>(tempoMode));
+    obj.insert(QStringLiteral("customBpm"), customBpm);
+    obj.insert(QStringLiteral("tempoRamp"), tempoRamp);
+    QJsonObject laneObj;
+    for (auto it = lanes.constBegin(); it != lanes.constEnd(); ++it) {
+        if (it.key() < 0 || it.key() >= kMixLaneCount) {
+            continue;
+        }
+        QJsonArray points;
+        for (const MixPoint& p : it.value()) {
+            points.append(QJsonArray{p.x, p.y});
+        }
+        laneObj.insert(QString::fromLatin1(kLaneKeys[it.key()]), points);
+    }
+    obj.insert(QStringLiteral("lanes"), laneObj);
     return obj;
 }
 
@@ -66,134 +181,44 @@ std::optional<MixTransition> MixTransition::fromJson(const QJsonObject& obj) {
         return std::nullopt;
     }
     MixTransition t;
-    t.fromTrigger = qMax(0.0, obj.value(QStringLiteral("fromTrigger")).toDouble());
-    t.toStart = qMax(0.0, obj.value(QStringLiteral("toStart")).toDouble());
-    t.length = qBound(0.0, obj.value(QStringLiteral("length")).toDouble(8.0), 120.0);
-    const int style = obj.value(QStringLiteral("style")).toInt();
-    t.style = (style >= 0 && style < kStyleCount) ? static_cast<Style>(style) : Style::Auto;
-    const int curve = obj.value(QStringLiteral("curve")).toInt();
-    t.curve = (curve >= 0 && curve < kCurveCount) ? static_cast<Curve>(curve) : Curve::Smooth;
-    t.syncTempo = obj.value(QStringLiteral("syncTempo")).toBool(true);
-    return t;
-}
+    t.fromTrigger = std::max(0.0, obj.value(QStringLiteral("fromTrigger")).toDouble());
+    t.toStart = std::max(0.0, obj.value(QStringLiteral("toStart")).toDouble());
+    t.length = std::clamp(obj.value(QStringLiteral("length")).toDouble(8.0), 0.0, 120.0);
 
-bool MixTransition::bpmsCompatible(double bpmA, double bpmB, double tolerance) {
-    if (bpmA <= 0 || bpmB <= 0) {
-        return false;
-    }
-    // Accept half / double time as well.
-    for (double factor : {1.0, 2.0, 0.5}) {
-        if (qAbs(bpmA - bpmB * factor) / bpmA <= tolerance) {
-            return true;
+    if (obj.value(QStringLiteral("version")).toInt() >= 2) {
+        const int mode = obj.value(QStringLiteral("tempoMode")).toInt(1);
+        t.tempoMode = (mode >= 0 && mode <= 3) ? static_cast<TempoMode>(mode) : TempoMode::KeepA;
+        t.customBpm = obj.value(QStringLiteral("customBpm")).toDouble();
+        t.tempoRamp = obj.value(QStringLiteral("tempoRamp")).toBool(true);
+        const QJsonObject laneObj = obj.value(QStringLiteral("lanes")).toObject();
+        for (int i = 0; i < kMixLaneCount; ++i) {
+            const QJsonArray arr = laneObj.value(QString::fromLatin1(kLaneKeys[i])).toArray();
+            QVector<MixPoint> points;
+            for (const QJsonValue& v : arr) {
+                const QJsonArray p = v.toArray();
+                if (p.size() == 2) {
+                    points.append({p.at(0).toDouble(), p.at(1).toDouble()});
+                }
+            }
+            if (points.size() >= 2) {
+                t.setLane(static_cast<MixLane>(i), points);
+            }
+        }
+    } else {
+        // Version 1: style / curve / syncTempo.
+        t.tempoMode = obj.value(QStringLiteral("syncTempo")).toBool(true)
+                ? TempoMode::KeepA
+                : TempoMode::Off;
+        t.tempoRamp = false;
+        const int style = obj.value(QStringLiteral("style")).toInt();
+        if (style == 5) { // Cut
+            t.length = 0.0;
+        } else if (style == 6) { // Overlap: both at full level, then B only
+            t.setLane(MixLane::VolumeA, {{0.0, 1.0}, {0.98, 1.0}, {1.0, 0.0}});
+            t.setLane(MixLane::VolumeB, {{0.0, 1.0}, {1.0, 1.0}});
         }
     }
-    return false;
-}
-
-MixTransition::Style MixTransition::effectiveStyle(double fromBpm, double toBpm) const {
-    if (style != Style::Auto) {
-        return style;
-    }
-    return bpmsCompatible(fromBpm, toBpm) ? Style::BassSwap : Style::Fade;
-}
-
-QString MixTransition::styleName(Style style) {
-    switch (style) {
-    case Style::Auto:
-        return QObject::tr("Auto");
-    case Style::Fade:
-        return QObject::tr("Fade");
-    case Style::Rise:
-        return QObject::tr("Rise");
-    case Style::FilterOut:
-        return QObject::tr("Filter Out");
-    case Style::BassSwap:
-        return QObject::tr("Bass Swap");
-    case Style::Cut:
-        return QObject::tr("Cut");
-    case Style::Overlap:
-        return QObject::tr("Overlap");
-    }
-    return QString();
-}
-
-QString MixTransition::styleDescription(Style style) {
-    switch (style) {
-    case Style::Auto:
-        return QObject::tr("Picks Bass Swap when the tempos match, otherwise Fade.");
-    case Style::Fade:
-        return QObject::tr("A smooth crossfade from one track to the next.");
-    case Style::Rise:
-        return QObject::tr(
-                "The next track rises in through an opening filter while the "
-                "current one sinks out muffled.");
-    case Style::FilterOut:
-        return QObject::tr(
-                "The current track thins out through a high-pass sweep while "
-                "the next fades in.");
-    case Style::BassSwap:
-        return QObject::tr(
-                "Both play together with the next track's bass cut; halfway "
-                "through, the basslines swap.");
-    case Style::Cut:
-        return QObject::tr("Switches instantly at the transition point.");
-    case Style::Overlap:
-        return QObject::tr(
-                "Both tracks play at full volume during the overlap; at the end "
-                "the current track stops and the next one keeps playing.");
-    }
-    return QString();
-}
-
-QString MixTransition::curveName(Curve curve) {
-    switch (curve) {
-    case Curve::Smooth:
-        return QObject::tr("Smooth");
-    case Curve::Linear:
-        return QObject::tr("Linear");
-    case Curve::Early:
-        return QObject::tr("Early");
-    case Curve::Late:
-        return QObject::tr("Late");
-    }
-    return QString();
-}
-
-double MixTransition::applyCurve(Curve curve, double progress) {
-    const double p = clamp01(progress);
-    switch (curve) {
-    case Curve::Smooth:
-        return p * p * (3.0 - 2.0 * p);
-    case Curve::Linear:
-        return p;
-    case Curve::Early:
-        return std::sqrt(p);
-    case Curve::Late:
-        return p * p;
-    }
-    return p;
-}
-
-double MixTransition::crossfadePosition(Style effectiveStyle, Curve curve, double progress) {
-    const double p = clamp01(progress);
-    const double c = applyCurve(curve, p);
-    switch (effectiveStyle) {
-    case Style::BassSwap:
-        // Bring the new track up by the swap point and only then let the old
-        // one go, so both basslines never clash.
-        return 0.5 * smoothstep(0.0, 0.45, c) + 0.5 * smoothstep(0.55, 1.0, p);
-    case Style::Cut:
-        return p >= 0.5 ? 1.0 : 0.0;
-    case Style::Overlap:
-        // Crossfader centered: both decks at full volume (default curve).
-        return p >= 1.0 ? 1.0 : 0.5;
-    case Style::Auto:
-    case Style::Fade:
-    case Style::Rise:
-    case Style::FilterOut:
-        break;
-    }
-    return c;
+    return t;
 }
 
 // ---------------------------------------------------------------------------
@@ -253,7 +278,11 @@ bool MixTransitionStore::isEnabled() const {
 }
 
 void MixTransitionStore::setEnabled(bool enabled) {
+    if (enabled == isEnabled()) {
+        return;
+    }
     m_pConfig->setValue(kMixEnabledKey, enabled);
+    emit enabledChanged(enabled);
     emit transitionsChanged();
 }
 
@@ -280,7 +309,7 @@ void MixTransitionStore::save() const {
         transitions.insert(it.key(), it.value());
     }
     QJsonObject root;
-    root.insert(QStringLiteral("version"), 1);
+    root.insert(QStringLiteral("version"), 2);
     root.insert(QStringLiteral("transitions"), transitions);
 
     QSaveFile file(m_filePath);
@@ -300,7 +329,8 @@ void MixTransitionStore::save() const {
 
 MixEffectDriver::MixEffectDriver()
         : m_active(false),
-          m_style(MixTransition::Style::Fade) {
+          m_startBpm(0.0),
+          m_targetBpm(0.0) {
 }
 
 MixEffectDriver::~MixEffectDriver() {
@@ -328,6 +358,11 @@ void MixEffectDriver::set(const QString& group, const QString& item, double valu
     }
 }
 
+double MixEffectDriver::get(const QString& group, const QString& item) {
+    ControlProxy* pControl = control(group, item);
+    return pControl ? pControl->get() : 0.0;
+}
+
 double MixEffectDriver::original(const QString& group, const QString& item) {
     if (!control(group, item)) {
         return 1.0;
@@ -338,63 +373,92 @@ double MixEffectDriver::original(const QString& group, const QString& item) {
 void MixEffectDriver::begin(const QString& fromGroup,
         const QString& toGroup,
         const MixTransition& transition,
-        MixTransition::Style effectiveStyle) {
+        double toTrackFileBpm) {
     finish();
     m_from = fromGroup;
     m_to = toGroup;
     m_transition = transition;
-    m_style = effectiveStyle;
     m_active = true;
 
-    if (transition.syncTempo) {
-        // One-shot beat sync of the incoming deck to the playing one.
-        set(m_to, QStringLiteral("beatsync"), 1.0);
-        set(m_to, QStringLiteral("beatsync"), 0.0);
+    m_startBpm = get(m_from, kBpm);
+    switch (transition.tempoMode) {
+    case MixTransition::TempoMode::Off:
+        m_targetBpm = 0.0;
+        break;
+    case MixTransition::TempoMode::KeepA:
+        m_targetBpm = m_startBpm;
+        break;
+    case MixTransition::TempoMode::UseB:
+        m_targetBpm = toTrackFileBpm > 0 ? toTrackFileBpm : m_startBpm;
+        break;
+    case MixTransition::TempoMode::Custom:
+        m_targetBpm = transition.customBpm > 0 ? transition.customBpm : m_startBpm;
+        break;
     }
-    kLogger.debug() << "Begin" << MixTransition::styleName(m_style) << m_from
-                    << "->" << m_to << "length" << transition.length;
+    if (transition.tempoMode != MixTransition::TempoMode::Off && m_startBpm > 0) {
+        // The incoming deck joins at the outgoing deck's tempo, so the two are
+        // beatmatched for the overlap.
+        set(m_to, kBpm, m_startBpm);
+    }
+    kLogger.debug() << "Begin" << m_from << "->" << m_to << "length" << transition.length
+                    << "bpm" << m_startBpm << "->" << m_targetBpm;
     apply(0.0);
 }
 
-double MixEffectDriver::apply(double progress) {
-    if (!m_active) {
-        return clamp01(progress);
+void MixEffectDriver::started() {
+    if (m_active && m_transition.tempoMode != MixTransition::TempoMode::Off) {
+        set(m_to, kPhaseSync, 1.0);
+        set(m_to, kPhaseSync, 0.0);
     }
-    const double p = clamp01(progress);
-    const double c = MixTransition::crossfadePosition(m_style, m_transition.curve, p);
+}
 
-    switch (m_style) {
-    case MixTransition::Style::Rise: {
-        // Incoming opens up from a thin high-passed sound to full range.
-        const double open = smoothstep(0.0, 0.85, p);
-        set(quickEffectGroup(m_to),
-                kFilterItem,
-                kFilterHighPassMax - (kFilterHighPassMax - kFilterNeutral) * open);
-        // Outgoing gets muffled as it leaves.
-        set(quickEffectGroup(m_from),
-                kFilterItem,
-                kFilterNeutral - (kFilterNeutral - kFilterLowPassMax) * smoothstep(0.3, 1.0, p));
-        return c;
+void MixEffectDriver::apply(double progress) {
+    if (!m_active) {
+        return;
     }
-    case MixTransition::Style::FilterOut:
-        set(quickEffectGroup(m_from),
-                kFilterItem,
-                kFilterNeutral + (kFilterHighPassMax - kFilterNeutral) * smoothstep(0.0, 1.0, p));
-        return c;
-    case MixTransition::Style::BassSwap: {
-        // Swap over a short window around the middle of the transition.
-        const double swap = smoothstep(0.45, 0.55, p);
-        set(eqGroup(m_from), kLowEqItem, original(eqGroup(m_from), kLowEqItem) * (1.0 - swap));
-        set(eqGroup(m_to), kLowEqItem, original(eqGroup(m_to), kLowEqItem) * swap);
-        return c;
+    const double p = std::clamp(progress, 0.0, 1.0);
+    const MixTransition& t = m_transition;
+
+    // Fader levels, relative to where the user left the faders.
+    set(m_from, kVolume, original(m_from, kVolume) * t.evaluate(t.lane(MixLane::VolumeA), p));
+    set(m_to, kVolume, original(m_to, kVolume) * t.evaluate(t.lane(MixLane::VolumeB), p));
+
+    // EQ and filter lines only touch the knobs when they were edited.
+    static const struct {
+        MixLane lane;
+        bool fromDeck;
+        const char* item;
+    } kEqLanes[] = {
+            {MixLane::LowA, true, "parameter1"},
+            {MixLane::MidA, true, "parameter2"},
+            {MixLane::HighA, true, "parameter3"},
+            {MixLane::LowB, false, "parameter1"},
+            {MixLane::MidB, false, "parameter2"},
+            {MixLane::HighB, false, "parameter3"},
+    };
+    for (const auto& eq : kEqLanes) {
+        if (!t.isLaneActive(eq.lane)) {
+            continue;
+        }
+        const QString group = eqGroup(eq.fromDeck ? m_from : m_to);
+        const QString item = QString::fromLatin1(eq.item);
+        set(group, item, original(group, item) * eqFactor(t.evaluate(t.lane(eq.lane), p)));
     }
-    case MixTransition::Style::Cut:
-    case MixTransition::Style::Overlap:
-    case MixTransition::Style::Auto: // resolved before begin()
-    case MixTransition::Style::Fade:
-        break;
+    if (t.isLaneActive(MixLane::FilterA)) {
+        set(quickEffectGroup(m_from), kFilterItem, t.evaluate(t.lane(MixLane::FilterA), p));
     }
-    return c;
+    if (t.isLaneActive(MixLane::FilterB)) {
+        set(quickEffectGroup(m_to), kFilterItem, t.evaluate(t.lane(MixLane::FilterB), p));
+    }
+
+    // Tempo: both decks follow the same curve so they stay beatmatched.
+    if (t.tempoMode != MixTransition::TempoMode::Off && m_startBpm > 0 && m_targetBpm > 0 &&
+            std::fabs(m_targetBpm - m_startBpm) > 0.01) {
+        const double bpm = m_startBpm +
+                (m_targetBpm - m_startBpm) * t.evaluate(t.lane(MixLane::Tempo), p);
+        set(m_from, kBpm, bpm);
+        set(m_to, kBpm, bpm);
+    }
 }
 
 void MixEffectDriver::finish() {
@@ -403,8 +467,14 @@ void MixEffectDriver::finish() {
         return;
     }
     m_active = false;
+    const MixTransition& t = m_transition;
+    // Without a ramp the tempo switches once A is out.
+    if (t.tempoMode != MixTransition::TempoMode::Off && m_targetBpm > 0 &&
+            std::fabs(m_targetBpm - m_startBpm) > 0.01) {
+        set(m_to, kBpm, m_targetBpm);
+    }
     for (auto it = m_controls.begin(); it != m_controls.end(); ++it) {
-        if (it->first.endsWith(QStringLiteral("beatsync"))) {
+        if (it->first.endsWith(kBpm) || it->first.endsWith(kPhaseSync)) {
             continue;
         }
         it->second.pControl->set(it->second.original);

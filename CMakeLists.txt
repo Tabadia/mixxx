@@ -1003,9 +1003,10 @@ add_library(mixxx-lib STATIC EXCLUDE_FROM_ALL
   src/library/recording/dlgrecording.cpp
   src/library/recording/dlgrecording.ui
   src/library/recording/recordingfeature.cpp
-  src/library/autodj/mix/dlgmixtransition.cpp
+  src/library/autodj/mix/mixtransitionplayer.cpp
   src/library/autodj/mix/mixtransition.cpp
   src/library/autodj/mix/mixwaveformview.cpp
+  src/library/autodj/mix/wmixtransitionpanel.cpp
   src/library/online/dlgonlinesearch.cpp
   src/library/online/onlinebpmdetector.cpp
   src/library/online/onlinefeature.cpp

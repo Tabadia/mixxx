@@ -13,6 +13,7 @@
 #include "controllers/controllerlearningeventfilter.h"
 #include "controllers/controllermanager.h"
 #include "controllers/keyboard/keyboardeventfilter.h"
+#include "library/autodj/mix/wmixtransitionpanel.h"
 #include "library/basetracktablemodel.h"
 #include "library/library.h"
 #include "library/library_prefs.h"
@@ -577,6 +578,8 @@ QList<QWidget*> LegacySkinParser::parseNode(const QDomElement& node) {
         result = wrapWidget(parseCoverArt(node));
     } else if (nodeName == "SearchBox") {
         result = wrapWidget(parseSearchBox(node));
+    } else if (nodeName == "MixTransitionPanel") {
+        result = wrapWidget(parseMixTransitionPanel(node));
     } else if (nodeName == "WidgetGroup") {
         result = wrapWidget(parseWidgetGroup(node));
     } else if (nodeName == "TrackWidgetGroup") {
@@ -1474,6 +1477,14 @@ QWidget* LegacySkinParser::parseSearchBox(const QDomElement& node) {
     m_pLibrary->bindSearchboxWidget(pLineEditSearch);
 
     return pLineEditSearch;
+}
+
+QWidget* LegacySkinParser::parseMixTransitionPanel(const QDomElement& node) {
+    auto* pPanel = new WMixTransitionPanel(m_pParent,
+            m_pLibrary->mixTransitionStore(),
+            m_pLibrary->mixTransitionPlayer());
+    setupWidget(node, pPanel);
+    return pPanel;
 }
 
 QWidget* LegacySkinParser::parseCoverArt(const QDomElement& node) {
