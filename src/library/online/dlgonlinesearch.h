@@ -77,6 +77,8 @@ class DlgOnlineSearch : public QWidget, public virtual LibraryView {
     void onDownloadedFile(const DownloadJob& job, const QString& filePath);
     QString downloadedFilePath() const;
     void slotBpmDetected(const QString& url, double bpm);
+    void startSearchProcess(const QString& target, const QString& statusText);
+    static QString searchTarget(const QString& source, const QString& query);
     void applyBpmFilter();
     bool rowMatchesBpmFilter(int row) const;
 
@@ -105,6 +107,10 @@ class DlgOnlineSearch : public QWidget, public virtual LibraryView {
     QPointer<QProcess> m_pSearchProcess;
     QByteArray m_searchBuffer;
     QString m_searchError;
+    QString m_lastQuery;
+    QString m_searchSource; // empty for a pasted link
+    bool m_fallbackTried = false;
+    QList<QPair<QString, double>> m_pendingBpm; // url, duration
 
     QPointer<QProcess> m_pDownloadProcess;
     QByteArray m_downloadBuffer;

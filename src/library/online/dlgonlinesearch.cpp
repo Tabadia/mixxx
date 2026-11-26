@@ -42,6 +42,10 @@ const ConfigKey kDownloadDirKey(kConfigGroup, QStringLiteral("DownloadDir"));
 const ConfigKey kSourceKey(kConfigGroup, QStringLiteral("Source"));
 const ConfigKey kDetectBpmKey(kConfigGroup, QStringLiteral("DetectBpm"));
 
+const QString kSourceYouTube = QStringLiteral("ytsearch");
+const QString kSourceYouTubeMusic = QStringLiteral("ytmusic");
+const QString kSourceSoundCloud = QStringLiteral("scsearch");
+
 constexpr int kMaxResults = 25;
 constexpr int kUrlRole = Qt::UserRole;
 // Numeric value used for sorting (BPM, duration) and for the BPM filter.
@@ -132,15 +136,23 @@ DlgOnlineSearch::DlgOnlineSearch(
 
     // --- search bar ---
     m_pSourceCombo = new QComboBox(this);
-    m_pSourceCombo->addItem(tr("YouTube"), QStringLiteral("ytsearch"));
-    m_pSourceCombo->addItem(tr("SoundCloud"), QStringLiteral("scsearch"));
-    m_pSourceCombo->setCurrentIndex(
-            m_pConfig->getValue(kSourceKey, 0) == 1 ? 1 : 0);
+    m_pSourceCombo->addItem(tr("YouTube"), kSourceYouTube);
+    m_pSourceCombo->addItem(tr("YouTube Music"), kSourceYouTubeMusic);
+    m_pSourceCombo->addItem(tr("SoundCloud"), kSourceSoundCloud);
+    {
+        // Stored by name; older versions stored the index (0 YouTube, 1 SoundCloud).
+        QString saved = m_pConfig->getValueString(kSourceKey);
+        if (saved == QStringLiteral("1")) {
+            saved = kSourceSoundCloud;
+        }
+        const int index = m_pSourceCombo->findData(saved);
+        m_pSourceCombo->setCurrentIndex(index >= 0 ? index : 0);
+    }
     connect(m_pSourceCombo,
             QOverload<int>::of(&QComboBox::currentIndexChanged),
             this,
             [this](int index) {
-                m_pConfig->setValue(kSourceKey, index);
+                m_pConfig->setValue(kSourceKey, m_pSourceCombo->itemData(index).toString());
             });
 
     m_pQueryEdit = new QLineEdit(this);
@@ -372,29 +384,51 @@ void DlgOnlineSearch::slotSearch() {
 
     m_pBpmDetector->clear();
     m_pBpmDetector->setTools(ytDlp, ffmpegPath(), processEnvironment());
+    m_pendingBpm.clear();
     m_pResults->setSortingEnabled(false);
     m_pResults->setRowCount(0);
-    m_searchBuffer.clear();
-    m_searchError.clear();
+    m_lastQuery = query;
+    m_fallbackTried = false;
 
     // A pasted link is resolved directly; otherwise use the search prefix.
-    QString target;
     const bool isUrl = query.startsWith(QStringLiteral("http://")) ||
             query.startsWith(QStringLiteral("https://"));
+    const QString source = m_pSourceCombo->currentData().toString();
+    m_searchSource = isUrl ? QString() : source;
     if (isUrl) {
-        target = query;
+        startSearchProcess(query, tr("Resolving link..."));
     } else {
-        target = QStringLiteral("%1%2:%3")
-                         .arg(m_pSourceCombo->currentData().toString())
-                         .arg(kMaxResults)
-                         .arg(query);
+        startSearchProcess(searchTarget(source, query),
+                tr("Searching %1 for \"%2\"...").arg(m_pSourceCombo->currentText(), query));
     }
+}
+
+QString DlgOnlineSearch::searchTarget(const QString& source, const QString& query) {
+    if (source == kSourceYouTubeMusic) {
+        // The "songs" tab gives official audio, without music-video intros.
+        return QStringLiteral("https://music.youtube.com/search?q=") +
+                QString::fromLatin1(QUrl::toPercentEncoding(query)) +
+                QStringLiteral("#songs");
+    }
+    return QStringLiteral("%1%2:%3").arg(source).arg(kMaxResults).arg(query);
+}
+
+void DlgOnlineSearch::startSearchProcess(const QString& target, const QString& statusText) {
+    const QString ytDlp = ytDlpPath();
+    if (m_pSearchProcess) {
+        m_pSearchProcess->disconnect(this);
+        m_pSearchProcess->kill();
+        m_pSearchProcess->deleteLater();
+    }
+    m_searchBuffer.clear();
+    m_searchError.clear();
 
     QStringList args;
     args << QStringLiteral("--flat-playlist")
          << QStringLiteral("--dump-json")
          << QStringLiteral("--no-warnings")
          << QStringLiteral("--ignore-errors")
+         << QStringLiteral("--playlist-end") << QString::number(kMaxResults)
          << target;
 
     m_pSearchProcess = new QProcess(this);
@@ -429,9 +463,7 @@ void DlgOnlineSearch::slotSearch() {
                 }
             });
 
-    setStatus(isUrl ? tr("Resolving link...")
-                    : tr("Searching %1 for \"%2\"...")
-                              .arg(m_pSourceCombo->currentText(), query));
+    setStatus(statusText);
     m_pSearchButton->setEnabled(false);
     kLogger.debug() << "Running" << ytDlp << args;
     m_pSearchProcess->start(ytDlp, args);
@@ -476,8 +508,12 @@ void DlgOnlineSearch::addResultFromJson(const QByteArray& line) {
     if (uploader.isEmpty()) {
         uploader = obj.value(QStringLiteral("channel")).toString();
     }
-    if (uploader.isEmpty()) {
+    const QString host = QUrl(url).host();
+    if (uploader.isEmpty() && host.contains(QStringLiteral("soundcloud"))) {
+        // SoundCloud URLs are ".../<artist>/<track>".
         uploader = QUrl(url).path().section('/', 1, 1);
+    } else if (uploader.isEmpty() && host.startsWith(QStringLiteral("music."))) {
+        uploader = tr("YouTube Music");
     }
     const double durationSeconds = obj.value(QStringLiteral("duration")).toDouble();
     const QString duration = formatDuration(durationSeconds);
@@ -499,7 +535,8 @@ void DlgOnlineSearch::addResultFromJson(const QByteArray& line) {
         m_pResults->setItem(row, kColBpm, new NumericItem(QString::number(titleBpm), titleBpm));
     } else if (m_pDetectBpm->isChecked()) {
         m_pResults->setItem(row, kColBpm, new NumericItem(QStringLiteral("..."), kBpmPending));
-        m_pBpmDetector->enqueue(url, durationSeconds);
+        // Started once the search is done, so it doesn't compete with it.
+        m_pendingBpm.append(qMakePair(url, durationSeconds));
     } else {
         m_pResults->setItem(row, kColBpm, new NumericItem(QString(), kBpmUnknown));
     }
@@ -572,17 +609,42 @@ void DlgOnlineSearch::applyBpmFilter() {
 void DlgOnlineSearch::slotSearchFinished(int exitCode, QProcess::ExitStatus exitStatus) {
     Q_UNUSED(exitCode);
     slotSearchOutput(); // flush remaining output
+    const int count = m_pResults->rowCount();
+
+    // YouTube's regular search sometimes returns results in a format yt-dlp
+    // can't read and reports 0 hits without an error. YouTube Music usually
+    // finds the track, so retry there automatically.
+    if (exitStatus == QProcess::NormalExit && count == 0 && !m_fallbackTried &&
+            m_searchSource == kSourceYouTube) {
+        m_fallbackTried = true;
+        if (m_pSearchProcess) {
+            m_pSearchProcess->disconnect(this);
+            m_pSearchProcess->deleteLater();
+            m_pSearchProcess = nullptr;
+        }
+        startSearchProcess(searchTarget(kSourceYouTubeMusic, m_lastQuery),
+                tr("No YouTube results for \"%1\", trying YouTube Music...")
+                        .arg(m_lastQuery));
+        return;
+    }
+
     m_pSearchButton->setEnabled(true);
     m_pResults->setSortingEnabled(true);
-    const int count = m_pResults->rowCount();
+    for (const auto& pending : std::as_const(m_pendingBpm)) {
+        m_pBpmDetector->enqueue(pending.first, pending.second);
+    }
+    m_pendingBpm.clear();
     if (exitStatus != QProcess::NormalExit) {
         setStatus(tr("Search aborted."));
     } else if (count == 0) {
-        setStatus(m_searchError.isEmpty() ? tr("No results.") : m_searchError);
+        setStatus(m_searchError.isEmpty()
+                        ? tr("No results. Try different words, or another source.")
+                        : m_searchError);
     } else {
-        setStatus(tr("%1 results. Double-click or select and press a download "
-                     "button.")
-                          .arg(count));
+        setStatus((m_fallbackTried ? tr("%1 results from YouTube Music. ")
+                                   : tr("%1 results. "))
+                          .arg(count) +
+                tr("Double-click or select and press a download button."));
         m_pResults->selectRow(0);
     }
     if (m_pSearchProcess) {

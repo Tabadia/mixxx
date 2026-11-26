@@ -3739,3 +3739,17 @@ WLibrarySidebar::branch:!has-children:selected {
   height: 0px;
   width: 0px;
 }
+#DlgOnlineSearch QHeaderView::up-arrow {
+  image: url(skins:Modern/palemoon/buttons/btn__lib_sort_up.svg);
+  width: 10px;
+  height: 10px;
+  subcontrol-position: center right;
+  padding-right: 6px;
+}
+#DlgOnlineSearch QHeaderView::down-arrow {
+  image: url(skins:Modern/palemoon/buttons/btn__lib_sort_down.svg);
+  width: 10px;
+  height: 10px;
+  subcontrol-position: center right;
+  padding-right: 6px;
+}

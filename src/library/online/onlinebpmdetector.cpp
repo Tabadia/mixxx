@@ -72,9 +72,10 @@ void OnlineBpmDetector::clear() {
     m_running.clear();
     for (Job* pJob : running) {
         if (pJob->pProcess) {
+            // No blocking wait here: this runs on the GUI thread when a new
+            // search starts, and waiting froze the window for seconds.
             pJob->pProcess->disconnect(this);
             pJob->pProcess->kill();
-            pJob->pProcess->waitForFinished(1000);
             pJob->pProcess->deleteLater();
         }
         delete pJob;
