@@ -19,6 +19,7 @@
 #include "library/librarycontrol.h"
 #include "library/libraryfeature.h"
 #include "library/mixxxlibraryfeature.h"
+#include "library/online/onlinefeature.h"
 #include "library/recording/recordingfeature.h"
 #include "library/rekordbox/rekordboxfeature.h"
 #include "library/rhythmbox/rhythmboxfeature.h"
@@ -135,6 +136,8 @@ Library::Library(
     addFeature(m_pBrowseFeature);
 
     addFeature(new RecordingFeature(this, m_pConfig, pRecordingManager));
+
+    addFeature(new OnlineFeature(this, m_pConfig));
 
     addFeature(new SetlogFeature(this, UserSettingsPointer(m_pConfig)));
 

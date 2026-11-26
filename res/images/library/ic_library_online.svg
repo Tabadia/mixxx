@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <defs>
+    <linearGradient id="g" x1="16" y1="3" x2="16" y2="29" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ff6600"/>
+      <stop offset="1" stop-color="#de5800"/>
+    </linearGradient>
+  </defs>
+  <!-- cloud -->
+  <path fill="url(#g)" d="M9 23a6 6 0 0 1-.6-11.97A8 8 0 0 1 23.7 9.5 6.75 6.75 0 0 1 23.25 23H20v-2h3.25a4.75 4.75 0 0 0 .1-9.5l-.85-.02-.3-.8a6 6 0 0 0-11.3.62l-.2.8-.83.07A4 4 0 0 0 9 21h3v2z"/>
+  <!-- download arrow -->
+  <path fill="url(#g)" d="M15 13h2v10.17l2.59-2.58L21 22l-5 5-5-5 1.41-1.41L15 23.17z"/>
+</svg>
