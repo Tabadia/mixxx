@@ -12,7 +12,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
-#include <QRegularExpression>
+#include <QSettings>
 #include <QStandardPaths>
 #include <QTableWidget>
 #include <QUrl>
@@ -74,6 +74,19 @@ QString findTool(const QString& name) {
         extraDirs << localAppData + QStringLiteral("/Microsoft/WinGet/Links");
     }
     extraDirs << QDir::homePath() + QStringLiteral("/scoop/shims");
+    // winget installs usually extend the *saved* PATH, which a process that
+    // was started earlier (e.g. from an old shell) doesn't see yet.
+    for (const QString& key : {QStringLiteral("HKEY_CURRENT_USER\\Environment"),
+                 QStringLiteral("HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\"
+                                "Control\\Session Manager\\Environment")}) {
+        const QSettings env(key, QSettings::NativeFormat);
+        const QString path = env.value(QStringLiteral("Path")).toString();
+        for (QString dir : path.split(';', Qt::SkipEmptyParts)) {
+            dir.replace(QStringLiteral("%LOCALAPPDATA%"), localAppData, Qt::CaseInsensitive);
+            dir.replace(QStringLiteral("%USERPROFILE%"), QDir::homePath(), Qt::CaseInsensitive);
+            extraDirs << dir;
+        }
+    }
 #else
     extraDirs << QStringLiteral("/usr/local/bin")
               << QStringLiteral("/opt/homebrew/bin")
