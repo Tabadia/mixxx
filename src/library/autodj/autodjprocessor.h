@@ -10,6 +10,7 @@
 #include "control/controlpushbutton.h"
 #include "control/pollingcontrolproxy.h"
 #include "engine/channels/enginechannel.h"
+#include "library/autodj/mix/mixtransition.h"
 #include "library/playlisttablemodel.h"
 #include "preferences/usersettings.h"
 #include "track/track_decl.h"
@@ -126,6 +127,8 @@ class DeckAttributes : public QObject {
     double fadeEndPos;   // set in fromDeck nature
     bool isFromDeck;
     bool loading; // The data is inconsistent during loading a deck
+    // Saved "Mix" transition that applies when this deck is the fromDeck.
+    std::optional<MixTransition> mixTransition;
 
   private:
     ControlProxy m_orientation;
@@ -192,6 +195,14 @@ class AutoDJProcessor : public QObject {
     PlaylistTableModel* getTableModel() const {
         return m_pAutoDJTableModel;
     }
+
+    MixTransitionStore* mixTransitionStore() const {
+        return m_pMixStore;
+    }
+
+    /// Re-evaluates the pending transition, e.g. after a Mix transition
+    /// for the loaded tracks was edited.
+    void refreshTransition();
 
     bool nextTrackLoaded();
 
@@ -271,6 +282,14 @@ class AutoDJProcessor : public QObject {
             double fromDeckSecond,
             double fadeEndSecond,
             double toDeckStartSecond);
+    // Applies a saved Mix transition for the loaded track pair, if any.
+    // Returns false if the regular transition logic should be used.
+    bool applyMixTransition(DeckAttributes* pFromDeck,
+            DeckAttributes* pToDeck,
+            double fromDeckPosition,
+            double toDeckOutroStartSecond);
+    // Crossfader position for "from -> to" progress t (0..1).
+    double mixCrossfaderValue(const DeckAttributes* pFromDeck, double t) const;
     DeckAttributes* getLeftDeck();
     DeckAttributes* getRightDeck();
     DeckAttributes* getOtherDeck(const DeckAttributes* pThisDeck);
@@ -303,6 +322,9 @@ class AutoDJProcessor : public QObject {
     ControlPushButton m_addRandomTrack;
     ControlPushButton m_fadeNow;
     ControlPushButton m_enabledAutoDJ;
+
+    MixTransitionStore* m_pMixStore;
+    MixEffectDriver m_mixDriver;
 
     DISALLOW_COPY_AND_ASSIGN(AutoDJProcessor);
 };

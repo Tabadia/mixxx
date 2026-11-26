@@ -125,7 +125,8 @@ AutoDJProcessor::AutoDJProcessor(
           m_skipNext(ConfigKey(kControlGroup, QStringLiteral("skip_next"))),
           m_addRandomTrack(ConfigKey(kControlGroup, QStringLiteral("add_random_track"))),
           m_fadeNow(ConfigKey(kControlGroup, QStringLiteral("fade_now"))),
-          m_enabledAutoDJ(ConfigKey(kControlGroup, QStringLiteral("enabled"))) {
+          m_enabledAutoDJ(ConfigKey(kControlGroup, QStringLiteral("enabled"))),
+          m_pMixStore(new MixTransitionStore(pConfig, this)) {
     m_pAutoDJTableModel = make_parented<PlaylistTableModel>(
             this, pTrackCollectionManager, "mixxx.db.model.autodj");
     m_pAutoDJTableModel->selectPlaylist(iAutoDJPlaylistId);
@@ -307,6 +308,8 @@ void AutoDJProcessor::fadeNow() {
             (toDeckEndSecond - toDeckCurrentSecond) / 2); // for fade in and out
 
     pFromDeck->fadeEndPos = fromDeckCurrentSecond + fadeTime;
+    // "Fade now" is a manual override: use a plain crossfade.
+    pFromDeck->mixTransition.reset();
 
     // These are expected to be a fraction of the track length.
     pFromDeck->fadeBeginPos /= fromDeckDuration;
@@ -574,6 +577,7 @@ AutoDJProcessor::AutoDJError AutoDJProcessor::toggleAutoDJ(bool enable) {
         m_enabledAutoDJ.setAndConfirm(0.0);
         qDebug() << "Auto DJ disabled";
         m_eState = ADJ_DISABLED;
+        m_mixDriver.finish();
         disconnect(&m_coCrossfader,
                 &ControlProxy::valueChanged,
                 this,
@@ -745,6 +749,7 @@ void AutoDJProcessor::playerPositionChanged(DeckAttributes* pAttributes,
         // If the user stops the toDeck during a fade, let the fade continue
         // and do not load the next track.
         if (!otherDeckPlaying && otherDeck->isFromDeck) {
+            m_mixDriver.finish();
             // Force crossfader all the way to the (non fading) toDeck.
             if (m_eState == ADJ_RIGHT_FADING) {
                 setCrossfader(-1.0);
@@ -807,6 +812,19 @@ void AutoDJProcessor::playerPositionChanged(DeckAttributes* pAttributes,
                     otherDeck->setPlayPosition(otherDeck->startPos);
                 }
 
+                if (thisDeck->mixTransition) {
+                    // Start the Mix automation (tempo sync, EQ, filters)
+                    // before the incoming track becomes audible.
+                    const TrackPointer pFromTrack = thisDeck->getLoadedTrack();
+                    const TrackPointer pToTrack = otherDeck->getLoadedTrack();
+                    m_mixDriver.begin(thisDeck->group,
+                            otherDeck->group,
+                            *thisDeck->mixTransition,
+                            thisDeck->mixTransition->effectiveStyle(
+                                    pFromTrack ? pFromTrack->getBpm() : 0.0,
+                                    pToTrack ? pToTrack->getBpm() : 0.0));
+                }
+
                 if (!otherDeckPlaying) {
                     otherDeck->play();
                 }
@@ -848,6 +866,7 @@ void AutoDJProcessor::playerPositionChanged(DeckAttributes* pAttributes,
             // P1/P2FADING case above).
             thisDeck->stop();
             m_transitionProgress = 1.0;
+            m_mixDriver.finish();
             // Note: If the user has stopped the toDeck during the transition.
             // this deck just stops as well. In this case a stopped AutoDJ is accepted
             // because the use did it intentionally
@@ -858,7 +877,18 @@ void AutoDJProcessor::playerPositionChanged(DeckAttributes* pAttributes,
             double transitionProgress = (thisPlayPosition - thisDeck->fadeBeginPos) /
                     (thisDeck->fadeEndPos - thisDeck->fadeBeginPos);
             double transitionStep = transitionProgress - m_transitionProgress;
-            if (transitionStep > 0.0) {
+            if (m_mixDriver.isActive()) {
+                // Mix transition: the shape is fully determined by the
+                // progress, so set the crossfader to an absolute position.
+                if (transitionStep > 0.0) {
+                    const double t = transitionProgress >= 1.0
+                            ? 1.0
+                            : m_mixDriver.apply(transitionProgress);
+                    setCrossfader(transitionProgress >= 1.0
+                                    ? crossfaderTarget
+                                    : mixCrossfaderValue(thisDeck, t));
+                }
+            } else if (transitionStep > 0.0) {
                 // We have made progress.
                 // Backward seeks pause the transitions; forward seeks speed up
                 // the transitions. If there has been a seek beyond endPos, end
@@ -1351,7 +1381,9 @@ void AutoDJProcessor::calculateTransition(DeckAttributes* pFromDeck,
                  << "outroLength" << outroLength;
     }
 
-    switch (m_transitionMode) {
+    if (applyMixTransition(pFromDeck, pToDeck, fromDeckPosition, toDeckOutroStartSecond)) {
+        // A saved Mix transition for this pair defines the timing.
+    } else switch (m_transitionMode) {
     case TransitionMode::FullIntroOutro: {
         // Use the outro or intro length for the transition time, whichever is
         // shorter. Let the full outro and intro play; do not cut off any part
@@ -1505,6 +1537,75 @@ void AutoDJProcessor::calculateTransition(DeckAttributes* pFromDeck,
                  << pFromDeck->fadeBeginPos << pFromDeck->fadeEndPos
                  << pToDeck->startPos;
     }
+}
+
+bool AutoDJProcessor::applyMixTransition(DeckAttributes* pFromDeck,
+        DeckAttributes* pToDeck,
+        double fromDeckPosition,
+        double toDeckOutroStartSecond) {
+    pFromDeck->mixTransition.reset();
+    if (!m_pMixStore->isEnabled()) {
+        return false;
+    }
+    const TrackPointer pFromTrack = pFromDeck->getLoadedTrack();
+    const TrackPointer pToTrack = pToDeck->getLoadedTrack();
+    if (!pFromTrack || !pToTrack) {
+        return false;
+    }
+    const std::optional<MixTransition> transition =
+            m_pMixStore->get(pFromTrack->getId(), pToTrack->getId());
+    if (!transition) {
+        return false;
+    }
+    const double fromDuration = getEndSecond(pFromDeck);
+    const double toDuration = getEndSecond(pToDeck);
+    const double trigger = transition->fromTrigger;
+    // Fall back to the regular logic if the trigger point is unusable, e.g.
+    // the user has already played past it.
+    if (trigger <= fromDeckPosition || trigger >= fromDuration ||
+            transition->toStart >= toDuration - kMinimumTrackDurationSec) {
+        return false;
+    }
+    double length = transition->style == MixTransition::Style::Cut
+            ? 0.0
+            : transition->length;
+    length = math_min(length, fromDuration - trigger);
+    length = math_min(length, toDuration - transition->toStart);
+
+    pFromDeck->fadeBeginPos = trigger;
+    pFromDeck->fadeEndPos = trigger + length;
+    pToDeck->startPos = transition->toStart;
+    pToDeck->fadeBeginPos = toDeckOutroStartSecond;
+    if (pToDeck->fadeBeginPos <= transition->toStart + kMinimumTrackDurationSec) {
+        pToDeck->fadeBeginPos = toDuration;
+    }
+    pFromDeck->mixTransition = transition;
+    qDebug() << "Auto DJ: using Mix transition"
+             << MixTransition::styleName(transition->style) << "at" << trigger
+             << "s for" << length << "s";
+    return true;
+}
+
+double AutoDJProcessor::mixCrossfaderValue(const DeckAttributes* pFromDeck, double t) const {
+    // -1 is all the way to the left deck, 1 all the way to the right.
+    const double value = -1.0 + 2.0 * math_clamp(t, 0.0, 1.0);
+    return pFromDeck->isLeft() ? value : -value;
+}
+
+void AutoDJProcessor::refreshTransition() {
+    if (m_eState != ADJ_IDLE) {
+        return;
+    }
+    DeckAttributes* pFromDeck = getFromDeck();
+    if (!pFromDeck) {
+        return;
+    }
+    DeckAttributes* pToDeck = getOtherDeck(pFromDeck);
+    if (!pToDeck || pToDeck->isPlaying()) {
+        return;
+    }
+    calculateTransition(pFromDeck, pToDeck, true);
+    pToDeck->setPlayPosition(pToDeck->startPos);
 }
 
 void AutoDJProcessor::useFixedFadeTime(

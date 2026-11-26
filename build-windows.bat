@@ -14,5 +14,5 @@ IF NOT EXIST "%~dp0build\build.ninja" (
         -DOPTIMIZE=portable -DQTKEYCHAIN=OFF -DSTATIC_DEPS=OFF ^
         -DBUILD_TESTING=OFF -DBUILD_BENCH=OFF || EXIT /B 1
 )
-cmake --build "%~dp0build" --target mixxx || EXIT /B 1
+cmake --build "%~dp0build" --target mixxx -- -k 0 || EXIT /B 1
 ECHO BUILD SUCCEEDED
