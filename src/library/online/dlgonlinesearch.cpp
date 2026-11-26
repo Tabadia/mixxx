@@ -4,7 +4,9 @@
 #include <QComboBox>
 #include <QCoreApplication>
 #include <QSpinBox>
+#include <QDateTime>
 #include <QDir>
+#include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QHBoxLayout>
@@ -658,6 +660,10 @@ void DlgOnlineSearch::startNextDownload() {
 
     const QString dir = downloadDir();
     QDir().mkpath(dir);
+    m_pathFile = QDir::temp().filePath(QStringLiteral("mixxx-online-%1.txt")
+                                               .arg(QCoreApplication::applicationPid()));
+    QFile::remove(m_pathFile);
+    m_jobStarted = QDateTime::currentDateTime();
 
     QStringList args;
     args << QStringLiteral("--no-playlist")
@@ -676,8 +682,11 @@ void DlgOnlineSearch::startNextDownload() {
          << QStringLiteral("--progress-template")
          << QStringLiteral("download:") + kProgressMarker +
                     QStringLiteral("%(progress._percent_str)s")
-         << QStringLiteral("--print")
-         << QStringLiteral("after_move:") + kFileMarker + QStringLiteral("%(filepath)s");
+         // The final path goes to a file, not stdout: on Windows yt-dlp's
+         // console output drops characters like the Unicode slash it substitutes for
+         // "/" in titles, so a printed path may not match the real file.
+         << QStringLiteral("--print-to-file")
+         << QStringLiteral("after_move:%(filepath)s") << m_pathFile;
     const QString ffmpeg = ffmpegPath();
     if (!ffmpeg.isEmpty()) {
         args << QStringLiteral("--ffmpeg-location") << ffmpeg;
@@ -745,18 +754,51 @@ void DlgOnlineSearch::slotDownloadFinished(int exitCode, QProcess::ExitStatus ex
     m_pDownloadProcess = nullptr;
 
     const DownloadJob job = m_currentJob;
+    if (exitStatus == QProcess::NormalExit && exitCode == 0) {
+        m_currentFile = downloadedFilePath();
+    }
     if (exitStatus == QProcess::NormalExit && exitCode == 0 &&
             !m_currentFile.isEmpty() && QFileInfo::exists(m_currentFile)) {
         onDownloadedFile(job, m_currentFile);
     } else {
-        const QString reason = m_currentError.isEmpty()
+        QString reason = m_currentError.isEmpty()
                 ? tr("yt-dlp exited with code %1").arg(exitCode)
                 : m_currentError;
+        if (reason.contains(QStringLiteral("DRM"), Qt::CaseInsensitive)) {
+            reason = tr("this upload is DRM-protected (common for major-label "
+                        "releases on SoundCloud) and can't be downloaded. Try "
+                        "another result or the YouTube version.");
+        }
         kLogger.warning() << "Download failed:" << job.url << reason;
         setRowStatus(job.url, tr("Failed"));
         setStatus(tr("Download of \"%1\" failed: %2").arg(job.title, reason));
     }
     startNextDownload();
+}
+
+QString DlgOnlineSearch::downloadedFilePath() const {
+    // 1st choice: the exact path yt-dlp wrote with --print-to-file (UTF-8).
+    QFile file(m_pathFile);
+    if (file.open(QIODevice::ReadOnly)) {
+        const QStringList lines = QString::fromUtf8(file.readAll())
+                                          .split('\n', Qt::SkipEmptyParts);
+        file.close();
+        QFile::remove(m_pathFile);
+        if (!lines.isEmpty()) {
+            const QString path = lines.last().trimmed();
+            if (QFileInfo::exists(path)) {
+                return path;
+            }
+        }
+    }
+    // Fallback: the newest MP3 in the download folder written by this job.
+    const QFileInfoList candidates = QDir(downloadDir()).entryInfoList(
+            {QStringLiteral("*.mp3")}, QDir::Files, QDir::Time);
+    if (!candidates.isEmpty() &&
+            candidates.first().lastModified() >= m_jobStarted.addSecs(-2)) {
+        return candidates.first().absoluteFilePath();
+    }
+    return QString();
 }
 
 void DlgOnlineSearch::onDownloadedFile(const DownloadJob& job, const QString& filePath) {

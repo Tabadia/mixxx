@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QDateTime>
 #include <QList>
 #include <QPointer>
 #include <QProcess>
@@ -74,6 +75,7 @@ class DlgOnlineSearch : public QWidget, public virtual LibraryView {
     void setStatus(const QString& text);
     void addResultFromJson(const QByteArray& line);
     void onDownloadedFile(const DownloadJob& job, const QString& filePath);
+    QString downloadedFilePath() const;
     void slotBpmDetected(const QString& url, double bpm);
     void applyBpmFilter();
     bool rowMatchesBpmFilter(int row) const;
@@ -109,5 +111,7 @@ class DlgOnlineSearch : public QWidget, public virtual LibraryView {
     QList<DownloadJob> m_downloadQueue;
     DownloadJob m_currentJob;
     QString m_currentFile;
+    QString m_pathFile;
+    QDateTime m_jobStarted;
     QString m_currentError;
 };
