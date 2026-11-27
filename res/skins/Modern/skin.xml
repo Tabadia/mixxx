@@ -408,8 +408,8 @@
                           <Children>
                             <MixTransitionPanel>
                               <SizePolicy>me,f</SizePolicy>
-                              <MinimumSize>300,156</MinimumSize>
-                              <MaximumSize>-1,156</MaximumSize>
+                              <MinimumSize>300,62</MinimumSize>
+                              <MaximumSize>-1,62</MaximumSize>
                             </MixTransitionPanel>
                           </Children>
                           <Connection>

@@ -7,6 +7,7 @@
 #include "waveform/renderers/allshader/waveformrendererpreroll.h"
 #include "waveform/renderers/allshader/waveformrendermark.h"
 #include "waveform/renderers/allshader/waveformrendermarkrange.h"
+#include "waveform/renderers/allshader/waveformrendermixtransition.h"
 #include "waveform/widgets/allshader/moc_rgbstackedwaveformwidget.cpp"
 
 namespace allshader {
@@ -20,6 +21,7 @@ RGBStackedWaveformWidget::RGBStackedWaveformWidget(const QString& group, QWidget
     addRenderer<WaveformRendererFiltered>(true); // true for RGB Stacked
     addRenderer<WaveformRenderBeat>();
     addRenderer<WaveformRenderMark>();
+    addRenderer<WaveformRenderMixTransition>();
 
     m_initSuccess = init();
 }

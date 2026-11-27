@@ -31,6 +31,7 @@ class SidebarModel;
 class TrackCollectionManager;
 class MixTransitionStore;
 class MixTransitionPlayer;
+class MixTransitionEditor;
 class WSearchLineEdit;
 class WLibrarySidebar;
 class WLibrary;
@@ -68,6 +69,9 @@ class Library: public QObject {
     /// while DJing by hand. Shared by Auto DJ and the transition panel.
     MixTransitionStore* mixTransitionStore() const {
         return m_pMixTransitionStore;
+    }
+    MixTransitionEditor* mixTransitionEditor() const {
+        return m_pMixTransitionEditor;
     }
     MixTransitionPlayer* mixTransitionPlayer() const {
         return m_pMixTransitionPlayer;
@@ -174,6 +178,7 @@ class Library: public QObject {
     const QPointer<TrackCollectionManager> m_pTrackCollectionManager;
     MixTransitionStore* m_pMixTransitionStore;
     MixTransitionPlayer* m_pMixTransitionPlayer;
+    MixTransitionEditor* m_pMixTransitionEditor;
 
     parented_ptr<SidebarModel> m_pSidebarModel;
     parented_ptr<LibraryControl> m_pLibraryControl;

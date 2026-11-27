@@ -129,6 +129,7 @@ class DlgPrefDeck : public DlgPreferencePage, public Ui::DlgPrefDeckDlg  {
 
     bool m_bSetIntroStartAtMainCue;
     QCheckBox* m_pHotcueLatchCheckBox;
+    QCheckBox* m_pScratchOnDragCheckBox;
     bool m_bCloneDeckOnLoadDoubleTap;
 
     int m_iRateRangePercent;

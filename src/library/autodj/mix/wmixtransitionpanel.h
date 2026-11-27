@@ -1,14 +1,10 @@
 #pragma once
 
-#include <QTimer>
 #include <QWidget>
-#include <memory>
 
 #include "library/autodj/mix/mixtransition.h"
-#include "library/autodj/mix/mixwaveformview.h"
-#include "track/track_decl.h"
 
-class ControlProxy;
+class MixTransitionEditor;
 class MixTransitionPlayer;
 class QButtonGroup;
 class QCheckBox;
@@ -17,59 +13,45 @@ class QDoubleSpinBox;
 class QLabel;
 class QPushButton;
 
-/// Skin widget (<MixTransitionPanel/>): edits the transition between the
-/// tracks loaded on deck 1 and deck 2, right in the main window. Shows both
-/// waveforms around the transition with editable automation lines (volume,
-/// EQ, filter, tempo), the tempo target, and an Arm switch. Edits are saved
-/// automatically per track pair.
+/// Skin widget (<MixTransitionPanel/>): a slim control bar for the
+/// transition between the tracks on deck 1 and deck 2. The transition itself
+/// is shown and edited on the main waveforms (see MixTransitionEditor and
+/// WaveformRenderMixTransition); this bar sets the mix points from the
+/// decks' positions, the length, tempo target, which line to edit, preview
+/// and the Armed switch.
 class WMixTransitionPanel : public QWidget {
     Q_OBJECT
   public:
     WMixTransitionPanel(QWidget* pParent,
             MixTransitionStore* pStore,
+            MixTransitionEditor* pEditor,
             MixTransitionPlayer* pPlayer);
-    ~WMixTransitionPanel() override;
 
   private slots:
-    void slotTrackChanged(const QString& group, TrackPointer pNewTrack, TrackPointer pOldTrack);
-    void slotEdited();
-    void slotSave();
-    void slotSwap();
-    void slotReset();
-    void slotProgress(int fromDeck, double progress);
-    void slotRunningChanged(bool running);
+    void refresh();
 
   private:
-    void reload(bool reframe);
-    void updateControls();
-    void updateInfo();
-    void updateLaneButtons();
-    MixTransition currentTransition() const;
-    MixTransition suggestTransition() const;
-    double deckBpm(int deck) const;
-    double targetBpm(const MixTransition& transition) const;
-    TrackPointer track(int deck) const;
+    void applyTempoControls();
 
     MixTransitionStore* m_pStore;
+    MixTransitionEditor* m_pEditor;
     MixTransitionPlayer* m_pPlayer;
-    MixWaveformView* m_pView;
+    bool m_updating;
+
     QLabel* m_pTracks;
     QPushButton* m_pSwap;
+    QPushButton* m_pEdit;
     QButtonGroup* m_pLaneButtons;
+    QCheckBox* m_pSnap;
+    QLabel* m_pStatus;
+    QPushButton* m_pReset;
+    QPushButton* m_pArm;
+    QPushButton* m_pMixOut;
+    QPushButton* m_pMixIn;
+    QDoubleSpinBox* m_pLength;
     QComboBox* m_pTempoMode;
     QDoubleSpinBox* m_pCustomBpm;
     QCheckBox* m_pRamp;
-    QCheckBox* m_pSnap;
-    QPushButton* m_pArm;
-    QPushButton* m_pReset;
-    QLabel* m_pStatus;
-    QTimer m_saveTimer;
-    std::unique_ptr<ControlProxy> m_pBpm[2];
-
-    int m_fromDeck; // 0 or 1
-    bool m_manualDirection;
-    bool m_updating;
-    bool m_saved;
-    TrackPointer m_pFromTrack;
-    TrackPointer m_pToTrack;
+    QPushButton* m_pPreview;
+    QLabel* m_pHint;
 };

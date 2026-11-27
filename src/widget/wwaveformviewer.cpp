@@ -4,7 +4,9 @@
 #include <QEvent>
 
 #include "control/controlproxy.h"
+#include "library/autodj/mix/mixtransitioneditor.h"
 #include "moc_wwaveformviewer.cpp"
+#include "track/track.h"
 #include "util/dnd.h"
 #include "util/math.h"
 #include "waveform/waveformwidgetfactory.h"
@@ -22,6 +24,10 @@ WWaveformViewer::WWaveformViewer(
           m_zoomZoneWidth(20),
           m_bScratching(false),
           m_bBending(false),
+          m_bMixEditing(false),
+          m_bSilentDrag(false),
+          m_bSilentDragResume(false),
+          m_silentDragStartPosition(0.0),
           m_pCueMenuPopup(make_parented<WCueMenuPopup>(pConfig, this)),
           m_waveformWidget(nullptr) {
     setMouseTracking(true);
@@ -36,6 +42,8 @@ WWaveformViewer::WWaveformViewer(
     m_pWheel = new ControlProxy(
             group, "wheel", this, ControlFlag::NoAssertIfMissing);
     m_pPlayEnabled = new ControlProxy(group, "play", this, ControlFlag::NoAssertIfMissing);
+    m_pPlayPosition = new ControlProxy(
+            group, "playposition", this, ControlFlag::NoAssertIfMissing);
     m_pPassthroughEnabled = make_parented<ControlProxy>(group, "passthrough", this);
     m_pPassthroughEnabled->connectValueChanged(this, &WWaveformViewer::passthroughChanged);
 
@@ -82,6 +90,44 @@ void WWaveformViewer::mousePressEvent(QMouseEvent* event) {
     }
 
     m_mouseAnchor = event->pos();
+
+    // Transition editing (Mix): handles, region edges and points.
+    if (MixTransitionEditor* pEditor = MixTransitionEditor::instance();
+            pEditor && pEditor->editMode() &&
+            m_waveformWidget->getOrientation() == Qt::Horizontal) {
+        double seconds, value, secondsTolerance, valueTolerance;
+        if (mixEditPosition(event->pos(), &seconds, &value, &secondsTolerance, &valueTolerance)) {
+            if (event->button() == Qt::RightButton &&
+                    pEditor->removePoint(
+                            m_group, seconds, value, secondsTolerance, valueTolerance)) {
+                return;
+            }
+            if (event->button() == Qt::LeftButton &&
+                    pEditor->beginDrag(
+                            m_group, seconds, value, secondsTolerance, valueTolerance)) {
+                m_bMixEditing = true;
+                setCursor(Qt::SizeAllCursor);
+                return;
+            }
+        }
+    }
+
+    if (event->button() == Qt::LeftButton && !scratchOnDrag()) {
+        // Move through the track silently: pause while dragging, seek, and
+        // resume on release (no vinyl scratch sound).
+        if (m_bBending) {
+            m_pWheel->setParameter(0.5);
+            m_bBending = false;
+        }
+        m_bSilentDrag = true;
+        m_bSilentDragResume = isPlaying();
+        if (m_bSilentDragResume) {
+            m_pPlayEnabled->set(0.0);
+        }
+        m_silentDragStartPosition = m_pPlayPosition->get();
+        setCursor(Qt::ClosedHandCursor);
+        return;
+    }
 
     if (event->button() == Qt::LeftButton) {
         // If we are pitch-bending then disable and reset because the two
@@ -132,6 +178,33 @@ void WWaveformViewer::mouseMoveEvent(QMouseEvent* event) {
         return;
     }
 
+    if (m_bMixEditing) {
+        double seconds, value, secondsTolerance, valueTolerance;
+        if (MixTransitionEditor* pEditor = MixTransitionEditor::instance();
+                pEditor &&
+                mixEditPosition(event->pos(),
+                        &seconds,
+                        &value,
+                        &secondsTolerance,
+                        &valueTolerance)) {
+            pEditor->drag(m_group, seconds, value);
+        }
+        return;
+    }
+    if (m_bSilentDrag) {
+        const double trackSamples = m_waveformWidget->getTrackSamples();
+        if (trackSamples > 0) {
+            const int diff = m_waveformWidget->getOrientation() == Qt::Horizontal
+                    ? event->pos().x() - m_mouseAnchor.x()
+                    : event->pos().y() - m_mouseAnchor.y();
+            // Dragging the waveform to the left moves forward in the track.
+            const double deltaSamples = -diff * m_waveformWidget->getAudioSamplePerPixel() * 2;
+            m_pPlayPosition->set(math_clamp(
+                    m_silentDragStartPosition + deltaSamples / trackSamples, 0.0, 1.0));
+        }
+        return;
+    }
+
     // Only send signals for mouse moving if the left button is pressed
     if (m_bScratching) {
         int eventPosValue = m_waveformWidget->getOrientation() == Qt::Horizontal ?
@@ -178,6 +251,19 @@ void WWaveformViewer::mouseMoveEvent(QMouseEvent* event) {
 }
 
 void WWaveformViewer::mouseReleaseEvent(QMouseEvent* /*event*/) {
+    if (m_bMixEditing) {
+        if (MixTransitionEditor* pEditor = MixTransitionEditor::instance()) {
+            pEditor->endDrag();
+        }
+        m_bMixEditing = false;
+    }
+    if (m_bSilentDrag) {
+        if (m_bSilentDragResume) {
+            m_pPlayEnabled->set(1.0);
+        }
+        m_bSilentDrag = false;
+        m_bSilentDragResume = false;
+    }
     if (m_bScratching) {
         m_pScratchPositionEnable->set(0.0);
         m_bScratching = false;
@@ -190,6 +276,36 @@ void WWaveformViewer::mouseReleaseEvent(QMouseEvent* /*event*/) {
 
     // Set the cursor back to an arrow.
     setCursor(Qt::ArrowCursor);
+}
+
+bool WWaveformViewer::scratchOnDrag() const {
+    return m_pConfig->getValue(ConfigKey("[Waveform]", "ScratchOnDrag"), false);
+}
+
+bool WWaveformViewer::mixEditPosition(const QPoint& pos,
+        double* pSeconds,
+        double* pValue,
+        double* pSecondsTolerance,
+        double* pValueTolerance) const {
+    const TrackPointer pTrack = m_waveformWidget->getTrackInfo();
+    const double trackSamples = m_waveformWidget->getTrackSamples();
+    if (!pTrack || pTrack->getSampleRate() <= 0 || trackSamples <= 0) {
+        return false;
+    }
+    constexpr double kGrabPixels = 8.0;
+    constexpr double kMarginFraction = 0.08; // as in WaveformRenderMixTransition
+    const double samplesPerPixel = m_waveformWidget->getAudioSamplePerPixel() * 2;
+    const double samplesPerSecond = pTrack->getSampleRate() * 2.0;
+    const double sample = pos.x() * samplesPerPixel +
+            m_waveformWidget->getFirstDisplayedPosition() * trackSamples;
+    const double breadth = height();
+    const double top = breadth * kMarginFraction;
+    const double span = breadth * (1.0 - 2 * kMarginFraction);
+    *pSeconds = sample / samplesPerSecond;
+    *pValue = math_clamp(1.0 - (pos.y() - top) / span, 0.0, 1.0);
+    *pSecondsTolerance = kGrabPixels * samplesPerPixel / samplesPerSecond;
+    *pValueTolerance = kGrabPixels / span;
+    return true;
 }
 
 void WWaveformViewer::wheelEvent(QWheelEvent* event) {

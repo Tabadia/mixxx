@@ -7,6 +7,7 @@
 #include "waveform/renderers/allshader/waveformrenderertextured.h"
 #include "waveform/renderers/allshader/waveformrendermark.h"
 #include "waveform/renderers/allshader/waveformrendermarkrange.h"
+#include "waveform/renderers/allshader/waveformrendermixtransition.h"
 #include "waveform/widgets/allshader/moc_waveformwidgettexturedstacked.cpp"
 
 namespace allshader {
@@ -20,6 +21,7 @@ WaveformWidgetTexturedStacked::WaveformWidgetTexturedStacked(const QString& grou
     addRenderer<WaveformRendererTextured>(WaveformRendererTextured::Type::Stacked);
     addRenderer<WaveformRenderBeat>();
     addRenderer<WaveformRenderMark>();
+    addRenderer<WaveformRenderMixTransition>();
 
     m_initSuccess = init();
 }

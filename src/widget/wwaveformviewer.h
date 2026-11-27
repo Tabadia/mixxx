@@ -62,6 +62,14 @@ class WWaveformViewer : public WWidget, public TrackDropTarget {
     void setZoom(double zoom);
     void setDisplayBeatGridAlpha(int alpha);
     void setPlayMarkerPosition(double position);
+    bool scratchOnDrag() const;
+    /// Track position (seconds) and line value (0..1) under the mouse, plus
+    /// grab tolerances; false without a loaded track.
+    bool mixEditPosition(const QPoint& pos,
+            double* pSeconds,
+            double* pValue,
+            double* pSecondsTolerance,
+            double* pValueTolerance) const;
 
   private:
     const QString m_group;
@@ -72,9 +80,16 @@ class WWaveformViewer : public WWidget, public TrackDropTarget {
     ControlProxy* m_pScratchPosition;
     ControlProxy* m_pWheel;
     ControlProxy* m_pPlayEnabled;
+    ControlProxy* m_pPlayPosition;
     parented_ptr<ControlProxy> m_pPassthroughEnabled;
     bool m_bScratching;
     bool m_bBending;
+    // Editing a Mix transition region / automation line with the mouse.
+    bool m_bMixEditing;
+    // Dragging moves silently (no scratch) unless [Waveform],ScratchOnDrag.
+    bool m_bSilentDrag;
+    bool m_bSilentDragResume;
+    double m_silentDragStartPosition;
     QPoint m_mouseAnchor;
     parented_ptr<WCueMenuPopup> m_pCueMenuPopup;
     WaveformMarkPointer m_pHoveredMark;

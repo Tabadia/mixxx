@@ -1005,7 +1005,7 @@ add_library(mixxx-lib STATIC EXCLUDE_FROM_ALL
   src/library/recording/recordingfeature.cpp
   src/library/autodj/mix/mixtransitionplayer.cpp
   src/library/autodj/mix/mixtransition.cpp
-  src/library/autodj/mix/mixwaveformview.cpp
+  src/library/autodj/mix/mixtransitioneditor.cpp
   src/library/autodj/mix/wmixtransitionpanel.cpp
   src/library/online/dlgonlinesearch.cpp
   src/library/online/onlinebpmdetector.cpp
@@ -1571,6 +1571,7 @@ if(QOPENGL)
     src/waveform/renderers/allshader/waveformrenderersimple.cpp
     src/waveform/renderers/allshader/waveformrendermark.cpp
     src/waveform/renderers/allshader/waveformrendermarkrange.cpp
+    src/waveform/renderers/allshader/waveformrendermixtransition.cpp
     src/waveform/widgets/allshader/filteredwaveformwidget.cpp
     src/waveform/widgets/allshader/hsvwaveformwidget.cpp
     src/waveform/widgets/allshader/lrrgbwaveformwidget.cpp

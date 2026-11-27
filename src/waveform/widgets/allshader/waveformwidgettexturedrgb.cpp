@@ -7,6 +7,7 @@
 #include "waveform/renderers/allshader/waveformrenderertextured.h"
 #include "waveform/renderers/allshader/waveformrendermark.h"
 #include "waveform/renderers/allshader/waveformrendermarkrange.h"
+#include "waveform/renderers/allshader/waveformrendermixtransition.h"
 #include "waveform/widgets/allshader/moc_waveformwidgettexturedrgb.cpp"
 
 namespace allshader {
@@ -20,6 +21,7 @@ WaveformWidgetTexturedRGB::WaveformWidgetTexturedRGB(const QString& group, QWidg
     addRenderer<WaveformRendererTextured>(WaveformRendererTextured::Type::RGB);
     addRenderer<WaveformRenderBeat>();
     addRenderer<WaveformRenderMark>();
+    addRenderer<WaveformRenderMixTransition>();
 
     m_initSuccess = init();
 }

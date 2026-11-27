@@ -1482,6 +1482,7 @@ QWidget* LegacySkinParser::parseSearchBox(const QDomElement& node) {
 QWidget* LegacySkinParser::parseMixTransitionPanel(const QDomElement& node) {
     auto* pPanel = new WMixTransitionPanel(m_pParent,
             m_pLibrary->mixTransitionStore(),
+            m_pLibrary->mixTransitionEditor(),
             m_pLibrary->mixTransitionPlayer());
     setupWidget(node, pPanel);
     return pPanel;

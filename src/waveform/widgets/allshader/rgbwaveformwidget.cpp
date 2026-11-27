@@ -8,6 +8,7 @@
 #include "waveform/renderers/allshader/waveformrendererslipmode.h"
 #include "waveform/renderers/allshader/waveformrendermark.h"
 #include "waveform/renderers/allshader/waveformrendermarkrange.h"
+#include "waveform/renderers/allshader/waveformrendermixtransition.h"
 #include "waveform/widgets/allshader/moc_rgbwaveformwidget.cpp"
 
 namespace allshader {
@@ -21,6 +22,7 @@ RGBWaveformWidget::RGBWaveformWidget(const QString& group, QWidget* parent)
     addRenderer<WaveformRendererRGB>();
     addRenderer<WaveformRenderBeat>();
     addRenderer<WaveformRenderMark>();
+    addRenderer<WaveformRenderMixTransition>();
     // The following renderer will add an overlay waveform if a slip is in progress
     addRenderer<WaveformRendererSlipMode>();
     addRenderer<WaveformRendererPreroll>(::WaveformRendererAbstract::Slip);

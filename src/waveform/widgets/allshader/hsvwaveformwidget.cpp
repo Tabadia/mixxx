@@ -7,6 +7,7 @@
 #include "waveform/renderers/allshader/waveformrendererpreroll.h"
 #include "waveform/renderers/allshader/waveformrendermark.h"
 #include "waveform/renderers/allshader/waveformrendermarkrange.h"
+#include "waveform/renderers/allshader/waveformrendermixtransition.h"
 #include "waveform/widgets/allshader/moc_hsvwaveformwidget.cpp"
 
 namespace allshader {
@@ -20,6 +21,7 @@ HSVWaveformWidget::HSVWaveformWidget(const QString& group, QWidget* parent)
     addRenderer<WaveformRendererHSV>();
     addRenderer<WaveformRenderBeat>();
     addRenderer<WaveformRenderMark>();
+    addRenderer<WaveformRenderMixTransition>();
 
     m_initSuccess = init();
 }

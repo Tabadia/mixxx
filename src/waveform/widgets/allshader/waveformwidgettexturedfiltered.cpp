@@ -7,6 +7,7 @@
 #include "waveform/renderers/allshader/waveformrenderertextured.h"
 #include "waveform/renderers/allshader/waveformrendermark.h"
 #include "waveform/renderers/allshader/waveformrendermarkrange.h"
+#include "waveform/renderers/allshader/waveformrendermixtransition.h"
 #include "waveform/widgets/allshader/moc_waveformwidgettexturedfiltered.cpp"
 
 namespace allshader {
@@ -21,6 +22,7 @@ WaveformWidgetTexturedFiltered::WaveformWidgetTexturedFiltered(
     addRenderer<WaveformRendererTextured>(WaveformRendererTextured::Type::Filtered);
     addRenderer<WaveformRenderBeat>();
     addRenderer<WaveformRenderMark>();
+    addRenderer<WaveformRenderMixTransition>();
 
     m_initSuccess = init();
 }

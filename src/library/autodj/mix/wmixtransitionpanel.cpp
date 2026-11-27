@@ -9,25 +9,34 @@
 #include <QPushButton>
 #include <QVBoxLayout>
 #include <cmath>
-#include <limits>
+#include <iterator>
 
-#include "control/controlproxy.h"
+#include "library/autodj/mix/mixtransitioneditor.h"
 #include "library/autodj/mix/mixtransitionplayer.h"
-#include "mixer/playerinfo.h"
 #include "moc_wmixtransitionpanel.cpp"
-#include "track/beats.h"
-#include "track/cue.h"
 #include "track/track.h"
 
 namespace {
-
-const QString kDeckGroups[2] = {QStringLiteral("[Channel1]"), QStringLiteral("[Channel2]")};
-constexpr int kSaveDelayMs = 400;
 
 // Written as UTF-8 escapes: the sources aren't compiled as UTF-8 on MSVC.
 const char* const kArrow = "\xE2\x86\x92"; // ->
 const char* const kSwap = "\xE2\x87\x84";  // <->
 const char* const kDot = "\xE2\x80\xA2";   // bullet
+
+struct LaneButton {
+    MixTransitionEditor::LaneGroup group;
+    const char* label;
+    MixLane laneA;
+    MixLane laneB;
+};
+const LaneButton kLaneButtons[] = {
+        {MixTransitionEditor::LaneGroup::Volume, "Volume", MixLane::VolumeA, MixLane::VolumeB},
+        {MixTransitionEditor::LaneGroup::Bass, "Bass", MixLane::LowA, MixLane::LowB},
+        {MixTransitionEditor::LaneGroup::Mid, "Mid", MixLane::MidA, MixLane::MidB},
+        {MixTransitionEditor::LaneGroup::Treble, "Treble", MixLane::HighA, MixLane::HighB},
+        {MixTransitionEditor::LaneGroup::Filter, "Filter", MixLane::FilterA, MixLane::FilterB},
+        {MixTransitionEditor::LaneGroup::Tempo, "Tempo", MixLane::Tempo, MixLane::Tempo},
+};
 
 QString trackName(const TrackPointer& pTrack) {
     if (!pTrack) {
@@ -37,104 +46,101 @@ QString trackName(const TrackPointer& pTrack) {
     if (title.isEmpty()) {
         title = pTrack->getInfo();
     }
-    constexpr int kMaxChars = 28;
+    constexpr int kMaxChars = 26;
     if (title.size() > kMaxChars) {
         title = title.left(kMaxChars - 3).trimmed() + QStringLiteral("...");
     }
     return title;
 }
 
-double cueSeconds(const TrackPointer& pTrack, mixxx::CueType type, bool end) {
-    if (!pTrack) {
-        return -1;
-    }
-    const CuePointer pCue = pTrack->findCueByType(type);
-    const double sampleRate = pTrack->getSampleRate();
-    if (!pCue || sampleRate <= 0) {
-        return -1;
-    }
-    const auto pos = end ? pCue->getEndPosition() : pCue->getPosition();
-    return pos.isValid() ? pos.value() / sampleRate : -1;
-}
-
-double snapToBeat(const TrackPointer& pTrack, double seconds) {
-    if (!pTrack) {
-        return seconds;
-    }
-    const mixxx::BeatsPointer pBeats = pTrack->getBeats();
-    const double sampleRate = pTrack->getSampleRate();
-    if (!pBeats || sampleRate <= 0) {
-        return seconds;
-    }
-    const auto closest = pBeats->findClosestBeat(mixxx::audio::FramePos(seconds * sampleRate));
-    return closest.isValid() ? closest.value() / sampleRate : seconds;
-}
-
-struct LaneButton {
-    MixWaveformView::LaneGroup group;
-    const char* label;
-    MixLane laneA;
-    MixLane laneB;
-};
-const LaneButton kLaneButtons[] = {
-        {MixWaveformView::LaneGroup::Volume, "Volume", MixLane::VolumeA, MixLane::VolumeB},
-        {MixWaveformView::LaneGroup::Bass, "Bass", MixLane::LowA, MixLane::LowB},
-        {MixWaveformView::LaneGroup::Mid, "Mid", MixLane::MidA, MixLane::MidB},
-        {MixWaveformView::LaneGroup::Treble, "Treble", MixLane::HighA, MixLane::HighB},
-        {MixWaveformView::LaneGroup::Filter, "Filter", MixLane::FilterA, MixLane::FilterB},
-        {MixWaveformView::LaneGroup::Tempo, "Tempo", MixLane::Tempo, MixLane::Tempo},
-};
-
 } // anonymous namespace
 
 WMixTransitionPanel::WMixTransitionPanel(QWidget* pParent,
         MixTransitionStore* pStore,
+        MixTransitionEditor* pEditor,
         MixTransitionPlayer* pPlayer)
         : QWidget(pParent),
           m_pStore(pStore),
+          m_pEditor(pEditor),
           m_pPlayer(pPlayer),
-          m_fromDeck(0),
-          m_manualDirection(false),
-          m_updating(false),
-          m_saved(false) {
+          m_updating(false) {
     setObjectName(QStringLiteral("MixTransitionPanel"));
 
-    // --- header row ---
+    // --- row 1: what, direction, edit mode, which line, status, arm ---
     auto* pTitle = new QLabel(tr("Transition"), this);
     pTitle->setObjectName(QStringLiteral("MixTransitionTitle"));
     m_pTracks = new QLabel(this);
     m_pTracks->setTextFormat(Qt::RichText);
     m_pTracks->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-    m_pTracks->setMinimumWidth(80);
     m_pSwap = new QPushButton(QString::fromUtf8(kSwap), this);
-    m_pSwap->setToolTip(tr("Swap direction: transition from deck 2 into deck 1"));
     m_pSwap->setFixedWidth(34);
-
+    m_pSwap->setToolTip(tr("Swap direction (mix from the other deck)"));
+    m_pEdit = new QPushButton(tr("Edit on waveform"), this);
+    m_pEdit->setCheckable(true);
+    m_pEdit->setToolTip(
+            tr("Edit the transition on the main waveforms:\n"
+               "- drag the edges of the shaded region to move the mix point / length\n"
+               "- click inside it to add a point to the selected line, drag to move\n"
+               "- right-click a point to delete it\n"
+               "Outside the regions the waveform works as usual."));
     m_pLaneButtons = new QButtonGroup(this);
-    m_pLaneButtons->setExclusive(true);
-    auto* pLaneRow = new QHBoxLayout();
-    pLaneRow->setSpacing(2);
+    auto* pLanes = new QHBoxLayout();
+    pLanes->setSpacing(2);
     for (int i = 0; i < static_cast<int>(std::size(kLaneButtons)); ++i) {
         auto* pButton = new QPushButton(tr(kLaneButtons[i].label), this);
         pButton->setCheckable(true);
         pButton->setProperty("segment", true);
-        pButton->setToolTip(i == static_cast<int>(MixWaveformView::LaneGroup::Tempo)
-                        ? tr("Edit the tempo curve (0 = start BPM, top = target BPM)")
-                        : tr("Edit the %1 lines of both decks").arg(tr(kLaneButtons[i].label)));
         m_pLaneButtons->addButton(pButton, i);
-        pLaneRow->addWidget(pButton);
+        pLanes->addWidget(pButton);
     }
     m_pLaneButtons->button(0)->setChecked(true);
+    m_pSnap = new QCheckBox(tr("Snap"), this);
+    m_pSnap->setChecked(true);
+    m_pSnap->setToolTip(tr("Snap mix points and region edges to beats"));
+    m_pStatus = new QLabel(this);
+    m_pStatus->setObjectName(QStringLiteral("MixTransitionStatus"));
+    m_pReset = new QPushButton(tr("Reset"), this);
+    m_pReset->setToolTip(tr("Delete the saved transition for these two tracks"));
+    m_pArm = new QPushButton(tr("Armed"), this);
+    m_pArm->setCheckable(true);
+    m_pArm->setToolTip(tr("Fire saved transitions automatically when the playing deck\n"
+                          "reaches its mix-out point (by hand and in Auto DJ)."));
 
+    auto* pRow1 = new QHBoxLayout();
+    pRow1->setSpacing(6);
+    pRow1->addWidget(pTitle);
+    pRow1->addWidget(m_pTracks, 1);
+    pRow1->addWidget(m_pSwap);
+    pRow1->addSpacing(6);
+    pRow1->addWidget(m_pEdit);
+    pRow1->addLayout(pLanes);
+    pRow1->addWidget(m_pSnap);
+    pRow1->addSpacing(6);
+    pRow1->addWidget(m_pStatus);
+    pRow1->addWidget(m_pReset);
+    pRow1->addWidget(m_pArm);
+
+    // --- row 2: mix points from the decks, length, tempo, preview ---
+    m_pMixOut = new QPushButton(tr("A out here"), this);
+    m_pMixOut->setToolTip(tr("Set deck A's mix-out point to where deck A is now"));
+    m_pMixIn = new QPushButton(tr("B in here"), this);
+    m_pMixIn->setToolTip(tr("Set deck B's mix-in point to where deck B is now"));
+    auto* pLengthLabel = new QLabel(tr("Length"), this);
+    m_pLength = new QDoubleSpinBox(this);
+    m_pLength->setRange(0.0, 256.0);
+    m_pLength->setDecimals(0);
+    m_pLength->setSingleStep(4.0);
+    m_pLength->setSuffix(tr(" beats"));
+    m_pLength->setKeyboardTracking(false);
+    m_pLength->setToolTip(tr("Overlap length in beats of deck A (0 = cut)"));
     m_pTempoMode = new QComboBox(this);
     m_pTempoMode->addItem(tr("Tempo: leave"), static_cast<int>(MixTransition::TempoMode::Off));
     m_pTempoMode->addItem(tr("Tempo: keep A"), static_cast<int>(MixTransition::TempoMode::KeepA));
     m_pTempoMode->addItem(tr("Tempo: go to B"), static_cast<int>(MixTransition::TempoMode::UseB));
     m_pTempoMode->addItem(tr("Tempo: custom"), static_cast<int>(MixTransition::TempoMode::Custom));
     m_pTempoMode->setToolTip(
-            tr("Which BPM the mix ends at. B always joins at A's tempo so the\n"
-               "two are beatmatched; 'go to B' / 'custom' then move both decks\n"
-               "to the target, along the Ramp or the Tempo line."));
+            tr("B joins at A's tempo so both are beatmatched. 'Go to B' / 'custom'\n"
+               "then move both decks to the target along the Ramp or Tempo line."));
     m_pCustomBpm = new QDoubleSpinBox(this);
     m_pCustomBpm->setRange(40.0, 250.0);
     m_pCustomBpm->setDecimals(1);
@@ -142,356 +148,175 @@ WMixTransitionPanel::WMixTransitionPanel(QWidget* pParent,
     m_pCustomBpm->setKeyboardTracking(false);
     m_pRamp = new QCheckBox(tr("Ramp"), this);
     m_pRamp->setToolTip(tr("Glide the tempo across the transition instead of\n"
-                           "switching once A is out."));
-    m_pSnap = new QCheckBox(tr("Snap"), this);
-    m_pSnap->setChecked(true);
-    m_pSnap->setToolTip(tr("Snap the trigger, entry point and length to beats"));
+                           "switching once A is out"));
+    m_pPreview = new QPushButton(tr("Preview"), this);
+    m_pPreview->setProperty("primary", true);
+    m_pPreview->setToolTip(tr("Cue B at its mix-in point and play A from a few seconds\n"
+                              "before its mix-out point, so the transition plays."));
+    m_pHint = new QLabel(this);
+    m_pHint->setObjectName(QStringLiteral("MixTransitionStatus"));
+    m_pHint->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
 
-    m_pArm = new QPushButton(tr("Armed"), this);
-    m_pArm->setCheckable(true);
-    m_pArm->setToolTip(tr("When armed, saved transitions fire automatically when the\n"
-                          "playing deck reaches the trigger (by hand and in Auto DJ)."));
-    m_pReset = new QPushButton(tr("Reset"), this);
-    m_pReset->setToolTip(tr("Delete the saved transition for these two tracks"));
-    m_pStatus = new QLabel(this);
-    m_pStatus->setObjectName(QStringLiteral("MixTransitionStatus"));
-
-    auto* pTop = new QHBoxLayout();
-    pTop->setContentsMargins(0, 0, 0, 0);
-    pTop->setSpacing(6);
-    pTop->addWidget(pTitle);
-    pTop->addWidget(m_pTracks, 1);
-    pTop->addWidget(m_pSwap);
-    pTop->addSpacing(8);
-    pTop->addLayout(pLaneRow);
-    pTop->addSpacing(8);
-    pTop->addWidget(m_pTempoMode);
-    pTop->addWidget(m_pCustomBpm);
-    pTop->addWidget(m_pRamp);
-    pTop->addWidget(m_pSnap);
-    pTop->addSpacing(8);
-    pTop->addWidget(m_pStatus);
-    pTop->addWidget(m_pReset);
-    pTop->addWidget(m_pArm);
-
-    m_pView = new MixWaveformView(this);
+    auto* pRow2 = new QHBoxLayout();
+    pRow2->setSpacing(6);
+    pRow2->addWidget(m_pMixOut);
+    pRow2->addWidget(m_pMixIn);
+    pRow2->addSpacing(8);
+    pRow2->addWidget(pLengthLabel);
+    pRow2->addWidget(m_pLength);
+    pRow2->addSpacing(8);
+    pRow2->addWidget(m_pTempoMode);
+    pRow2->addWidget(m_pCustomBpm);
+    pRow2->addWidget(m_pRamp);
+    pRow2->addSpacing(8);
+    pRow2->addWidget(m_pPreview);
+    pRow2->addWidget(m_pHint, 1);
 
     auto* pLayout = new QVBoxLayout(this);
     pLayout->setContentsMargins(6, 4, 6, 4);
     pLayout->setSpacing(4);
-    pLayout->addLayout(pTop);
-    pLayout->addWidget(m_pView, 1);
-
-    for (int i = 0; i < 2; ++i) {
-        m_pBpm[i] = std::make_unique<ControlProxy>(kDeckGroups[i],
-                QStringLiteral("bpm"),
-                nullptr,
-                ControlFlag::AllowMissingOrInvalid);
-    }
+    pLayout->addLayout(pRow1);
+    pLayout->addLayout(pRow2);
 
     // --- wiring ---
-    m_saveTimer.setSingleShot(true);
-    m_saveTimer.setInterval(kSaveDelayMs);
-    connect(&m_saveTimer, &QTimer::timeout, this, &WMixTransitionPanel::slotSave);
-    connect(m_pView, &MixWaveformView::transitionEdited, this, &WMixTransitionPanel::slotEdited);
-    connect(m_pSwap, &QPushButton::clicked, this, &WMixTransitionPanel::slotSwap);
-    connect(m_pReset, &QPushButton::clicked, this, &WMixTransitionPanel::slotReset);
-    connect(m_pLaneButtons, &QButtonGroup::idClicked, this, [this](int id) {
-        m_pView->setLaneGroup(static_cast<MixWaveformView::LaneGroup>(id));
-    });
-    auto onControl = [this]() {
-        if (m_updating) {
-            return;
+    connect(m_pEditor, &MixTransitionEditor::changed, this, &WMixTransitionPanel::refresh);
+    connect(m_pSwap, &QPushButton::clicked, m_pEditor, &MixTransitionEditor::swap);
+    connect(m_pReset, &QPushButton::clicked, m_pEditor, &MixTransitionEditor::reset);
+    connect(m_pMixOut, &QPushButton::clicked, m_pEditor, &MixTransitionEditor::setMixOutHere);
+    connect(m_pMixIn, &QPushButton::clicked, m_pEditor, &MixTransitionEditor::setMixInHere);
+    connect(m_pPreview, &QPushButton::clicked, m_pEditor, &MixTransitionEditor::preview);
+    connect(m_pEdit, &QPushButton::toggled, this, [this](bool on) {
+        if (!m_updating) {
+            m_pEditor->setEditMode(on);
         }
-        MixTransition t = currentTransition();
-        m_pView->setTransition(t);
-        slotEdited();
-    };
-    connect(m_pTempoMode, QOverload<int>::of(&QComboBox::currentIndexChanged), this, onControl);
-    connect(m_pCustomBpm, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, onControl);
-    connect(m_pRamp, &QCheckBox::toggled, this, onControl);
-    connect(m_pSnap, &QCheckBox::toggled, m_pView, &MixWaveformView::setSnapToBeats);
-    m_pArm->setChecked(m_pStore->isEnabled());
-    connect(m_pArm, &QPushButton::toggled, this, [this](bool on) {
-        m_pStore->setEnabled(on);
-        updateInfo();
     });
+    connect(m_pSnap, &QCheckBox::toggled, m_pEditor, &MixTransitionEditor::setSnap);
+    connect(m_pLaneButtons, &QButtonGroup::idClicked, this, [this](int id) {
+        m_pEditor->setLaneGroup(static_cast<MixTransitionEditor::LaneGroup>(id));
+        if (!m_pEditor->editMode()) {
+            m_pEditor->setEditMode(true); // picking a line means editing it
+        }
+    });
+    connect(m_pLength, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double v) {
+        if (!m_updating) {
+            m_pEditor->setLengthBeats(v);
+        }
+    });
+    auto onTempo = [this]() {
+        if (!m_updating) {
+            applyTempoControls();
+        }
+    };
+    connect(m_pTempoMode, QOverload<int>::of(&QComboBox::currentIndexChanged), this, onTempo);
+    connect(m_pCustomBpm, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, onTempo);
+    connect(m_pRamp, &QCheckBox::toggled, this, onTempo);
+    m_pArm->setChecked(m_pStore->isEnabled());
+    connect(m_pArm, &QPushButton::toggled, m_pStore, &MixTransitionStore::setEnabled);
     connect(m_pStore, &MixTransitionStore::enabledChanged, this, [this](bool on) {
         if (m_pArm->isChecked() != on) {
             m_pArm->setChecked(on);
         }
     });
-    connect(&PlayerInfo::instance(),
-            &PlayerInfo::trackChanged,
-            this,
-            &WMixTransitionPanel::slotTrackChanged);
     if (m_pPlayer) {
-        connect(m_pPlayer,
-                &MixTransitionPlayer::progressChanged,
-                this,
-                &WMixTransitionPanel::slotProgress);
-        connect(m_pPlayer,
-                &MixTransitionPlayer::runningChanged,
-                this,
-                &WMixTransitionPanel::slotRunningChanged);
+        connect(m_pPlayer, &MixTransitionPlayer::runningChanged, this, &WMixTransitionPanel::refresh);
     }
-
-    reload(true);
+    refresh();
 }
 
-WMixTransitionPanel::~WMixTransitionPanel() {
-    if (m_saveTimer.isActive()) {
-        slotSave();
-    }
-}
-
-TrackPointer WMixTransitionPanel::track(int deck) const {
-    return PlayerInfo::instance().getTrackInfo(kDeckGroups[deck]);
-}
-
-double WMixTransitionPanel::deckBpm(int deck) const {
-    const double bpm = m_pBpm[deck]->valid() ? m_pBpm[deck]->get() : 0.0;
-    if (bpm > 0) {
-        return bpm;
-    }
-    const TrackPointer pTrack = track(deck);
-    return pTrack ? pTrack->getBpm() : 0.0;
-}
-
-double WMixTransitionPanel::targetBpm(const MixTransition& t) const {
-    const double start = deckBpm(m_fromDeck);
-    switch (t.tempoMode) {
-    case MixTransition::TempoMode::Off:
-        return 0.0;
-    case MixTransition::TempoMode::KeepA:
-        return start;
-    case MixTransition::TempoMode::UseB:
-        return m_pToTrack && m_pToTrack->getBpm() > 0 ? m_pToTrack->getBpm() : start;
-    case MixTransition::TempoMode::Custom:
-        return t.customBpm > 0 ? t.customBpm : start;
-    }
-    return start;
-}
-
-void WMixTransitionPanel::slotTrackChanged(const QString& group,
-        TrackPointer /*pNewTrack*/,
-        TrackPointer /*pOldTrack*/) {
-    if (group != kDeckGroups[0] && group != kDeckGroups[1]) {
-        return;
-    }
-    if (m_pPlayer && m_pPlayer->isRunning()) {
-        return; // don't swap the editor under a running transition
-    }
-    if (m_saveTimer.isActive()) {
-        slotSave(); // keep pending edits of the previous pair
-    }
-    m_manualDirection = false;
-    reload(true);
-}
-
-void WMixTransitionPanel::reload(bool reframe) {
-    if (!m_manualDirection) {
-        // Transition out of the deck that is playing; deck 1 -> 2 otherwise.
-        ControlProxy play2(kDeckGroups[1], QStringLiteral("play"), nullptr,
-                ControlFlag::AllowMissingOrInvalid);
-        ControlProxy play1(kDeckGroups[0], QStringLiteral("play"), nullptr,
-                ControlFlag::AllowMissingOrInvalid);
-        m_fromDeck = (play2.get() > 0 && play1.get() <= 0) ? 1 : 0;
-    }
-    m_pFromTrack = track(m_fromDeck);
-    m_pToTrack = track(1 - m_fromDeck);
-    m_pView->setTracks(m_pFromTrack, m_pToTrack);
-
-    if (!m_pFromTrack || !m_pToTrack) {
-        m_pView->setPlaceholderText(
-                tr("Load tracks on deck 1 and deck 2 to set up the transition between them."));
-        m_saved = false;
-        updateInfo();
-        return;
-    }
-    m_pView->setPlaceholderText(QString());
-    const std::optional<MixTransition> saved =
-            m_pStore->get(m_pFromTrack->getId(), m_pToTrack->getId());
-    m_saved = saved.has_value();
-    m_pView->setTransition(saved ? *saved : suggestTransition());
-    if (reframe) {
-        m_pView->frameTransition();
-    }
-    updateControls();
-}
-
-void WMixTransitionPanel::updateControls() {
-    const MixTransition& t = m_pView->transition();
-    m_updating = true;
-    const int modeIndex = m_pTempoMode->findData(static_cast<int>(t.tempoMode));
-    m_pTempoMode->setCurrentIndex(modeIndex >= 0 ? modeIndex : 1);
-    m_pCustomBpm->setValue(t.customBpm > 0 ? t.customBpm : std::max(40.0, deckBpm(m_fromDeck)));
-    m_pRamp->setChecked(t.tempoRamp);
-    m_updating = false;
-    updateInfo();
-}
-
-MixTransition WMixTransitionPanel::currentTransition() const {
-    MixTransition t = m_pView->transition();
+void WMixTransitionPanel::applyTempoControls() {
+    MixTransition t = m_pEditor->transition();
     t.tempoMode = static_cast<MixTransition::TempoMode>(m_pTempoMode->currentData().toInt());
     t.customBpm = t.tempoMode == MixTransition::TempoMode::Custom ? m_pCustomBpm->value() : 0.0;
-    // A tempo line equal to the old default follows the Ramp switch.
-    const bool wasActive = t.isLaneActive(MixLane::Tempo);
+    // An unedited tempo line follows the Ramp switch.
+    const bool tempoEdited = t.isLaneActive(MixLane::Tempo);
     const QVector<MixPoint> tempo = t.lane(MixLane::Tempo);
     t.tempoRamp = m_pRamp->isChecked();
-    if (wasActive) {
+    if (tempoEdited) {
         t.setLane(MixLane::Tempo, tempo);
     } else {
         t.lanes.remove(static_cast<int>(MixLane::Tempo));
     }
-    return t;
+    m_pEditor->setTransition(t);
 }
 
-void WMixTransitionPanel::updateLaneButtons() {
-    const MixTransition& t = m_pView->transition();
-    for (int i = 0; i < static_cast<int>(std::size(kLaneButtons)); ++i) {
-        const LaneButton& b = kLaneButtons[i];
-        const bool active = t.isLaneActive(b.laneA) || t.isLaneActive(b.laneB);
-        const bool showDot = active && b.group != MixWaveformView::LaneGroup::Volume;
-        m_pLaneButtons->button(i)->setText(showDot
-                        ? tr(b.label) + QStringLiteral(" ") + QString::fromUtf8(kDot)
-                        : tr(b.label));
-    }
-}
+void WMixTransitionPanel::refresh() {
+    m_updating = true;
+    const bool ready = m_pEditor->hasPair();
+    const MixTransition& t = m_pEditor->transition();
 
-void WMixTransitionPanel::updateInfo() {
-    const bool ready = m_pFromTrack && m_pToTrack;
-    for (QWidget* pWidget : std::initializer_list<QWidget*>{
-                 m_pTempoMode, m_pRamp, m_pSnap, m_pReset, m_pSwap}) {
+    for (QWidget* pWidget : std::initializer_list<QWidget*>{m_pSwap,
+                 m_pEdit,
+                 m_pSnap,
+                 m_pMixOut,
+                 m_pMixIn,
+                 m_pLength,
+                 m_pTempoMode,
+                 m_pCustomBpm,
+                 m_pPreview}) {
         pWidget->setEnabled(ready);
     }
     for (auto* pButton : m_pLaneButtons->buttons()) {
         pButton->setEnabled(ready);
     }
-    const MixTransition t = m_pView->transition();
-    const bool custom = t.tempoMode == MixTransition::TempoMode::Custom;
-    m_pCustomBpm->setVisible(custom);
-    m_pRamp->setEnabled(ready && t.tempoMode != MixTransition::TempoMode::Off &&
-            t.tempoMode != MixTransition::TempoMode::KeepA);
+    m_pEdit->setChecked(m_pEditor->editMode());
+    m_pLaneButtons->button(static_cast<int>(m_pEditor->laneGroup()))->setChecked(true);
 
     if (!ready) {
-        m_pTracks->setText(QString());
-        m_pStatus->setText(QString());
+        m_pTracks->setText(QStringLiteral("<span style='color:#6b6e78'>%1</span>")
+                                   .arg(tr("Load tracks on deck 1 and deck 2")));
+        m_pStatus->clear();
+        m_pHint->clear();
         m_pReset->setEnabled(false);
+        m_updating = false;
         return;
     }
-    const QString fromLetter = QStringLiteral("A");
-    const QString toLetter = QStringLiteral("B");
-    m_pTracks->setToolTip(tr("A = deck %1 (mixing out), B = deck %2 (mixing in)")
-                                  .arg(m_fromDeck + 1)
-                                  .arg(2 - m_fromDeck));
+
+    const int from = m_pEditor->fromDeck();
     m_pTracks->setText(QStringLiteral(
-            "<span style='color:#ff8a3d'>%1</span> %2 <span style='color:#6b6e78'>%3</span>"
-            " &nbsp;%4&nbsp; "
-            "<span style='color:#33c3f0'>%5</span> %6 <span style='color:#6b6e78'>%7</span>")
-                               .arg(fromLetter,
-                                       trackName(m_pFromTrack).toHtmlEscaped(),
-                                       QString::number(deckBpm(m_fromDeck), 'f', 1),
+            "<span style='color:#ff8a3d'>A</span> %1 <span style='color:#6b6e78'>%2</span>"
+            " &nbsp;%3&nbsp; "
+            "<span style='color:#33c3f0'>B</span> %4 <span style='color:#6b6e78'>%5</span>")
+                               .arg(trackName(m_pEditor->fromTrack()).toHtmlEscaped(),
+                                       QString::number(m_pEditor->deckBpm(from), 'f', 1),
                                        QString::fromUtf8(kArrow),
-                                       toLetter,
-                                       trackName(m_pToTrack).toHtmlEscaped(),
-                                       QString::number(m_pToTrack->getBpm(), 'f', 1)));
-    m_pView->setTempoRange(deckBpm(m_fromDeck), targetBpm(t));
-    m_pReset->setEnabled(m_saved);
-    m_pStatus->setText(m_saveTimer.isActive() ? tr("Saving...")
-                    : m_saved                 ? tr("Saved")
-                                              : tr("Suggested - edit to save"));
-    updateLaneButtons();
-}
+                                       trackName(m_pEditor->toTrack()).toHtmlEscaped(),
+                                       QString::number(m_pEditor->toTrack()->getBpm(), 'f', 1)));
+    m_pTracks->setToolTip(tr("A = deck %1 (mixing out), B = deck %2 (mixing in)")
+                                  .arg(from + 1)
+                                  .arg(2 - from));
+    m_pMixOut->setText(tr("A out here (deck %1)").arg(from + 1));
+    m_pMixIn->setText(tr("B in here (deck %1)").arg(2 - from));
 
-void WMixTransitionPanel::slotEdited() {
-    if (!m_pFromTrack || !m_pToTrack) {
-        return;
-    }
-    m_saveTimer.start();
-    updateInfo();
-}
+    m_pLength->setValue(std::round(m_pEditor->lengthBeats()));
+    const int modeIndex = m_pTempoMode->findData(static_cast<int>(t.tempoMode));
+    m_pTempoMode->setCurrentIndex(modeIndex >= 0 ? modeIndex : 1);
+    m_pCustomBpm->setVisible(t.tempoMode == MixTransition::TempoMode::Custom);
+    m_pCustomBpm->setValue(t.customBpm > 0 ? t.customBpm : std::max(40.0, m_pEditor->startBpm()));
+    m_pRamp->setChecked(t.tempoRamp);
+    m_pRamp->setEnabled(t.tempoMode == MixTransition::TempoMode::UseB ||
+            t.tempoMode == MixTransition::TempoMode::Custom);
 
-void WMixTransitionPanel::slotSave() {
-    m_saveTimer.stop();
-    if (!m_pFromTrack || !m_pToTrack) {
-        return;
+    for (int i = 0; i < static_cast<int>(std::size(kLaneButtons)); ++i) {
+        const LaneButton& b = kLaneButtons[i];
+        const bool active = t.isLaneActive(b.laneA) || t.isLaneActive(b.laneB);
+        const bool showDot = active && b.group != MixTransitionEditor::LaneGroup::Volume;
+        m_pLaneButtons->button(i)->setText(showDot
+                        ? tr(b.label) + QStringLiteral(" ") + QString::fromUtf8(kDot)
+                        : tr(b.label));
     }
-    const MixTransition t = currentTransition();
-    m_pView->setTransition(t);
-    m_pStore->set(m_pFromTrack, m_pToTrack, t);
-    m_saved = true;
-    updateInfo();
-}
 
-void WMixTransitionPanel::slotSwap() {
-    if (m_saveTimer.isActive()) {
-        slotSave();
-    }
-    m_fromDeck = 1 - m_fromDeck;
-    m_manualDirection = true;
-    reload(true);
-}
-
-void WMixTransitionPanel::slotReset() {
-    m_saveTimer.stop();
-    if (m_pFromTrack && m_pToTrack) {
-        m_pStore->remove(m_pFromTrack->getId(), m_pToTrack->getId());
-    }
-    reload(true);
-}
-
-void WMixTransitionPanel::slotProgress(int fromDeck, double progress) {
-    if (fromDeck != m_fromDeck) {
-        return;
-    }
-    m_pView->setPlayhead(progress * m_pView->transition().length);
-}
-
-void WMixTransitionPanel::slotRunningChanged(bool running) {
-    if (!running) {
-        m_pView->setPlayhead(std::numeric_limits<double>::quiet_NaN());
-    }
-    m_pStatus->setText(running ? tr("Mixing...") : (m_saved ? tr("Saved") : QString()));
-}
-
-MixTransition WMixTransitionPanel::suggestTransition() const {
-    MixTransition t;
-    if (!m_pFromTrack || !m_pToTrack) {
-        return t;
-    }
-    const double durationA = m_pFromTrack->getDuration();
-    const double bpmA = m_pFromTrack->getBpm();
-    const double bpmB = m_pToTrack->getBpm();
-    const double beat = bpmA > 0 ? 60.0 / bpmA : 0.5;
-
-    const double outroStart = cueSeconds(m_pFromTrack, mixxx::CueType::Outro, false);
-    const double outroEnd = cueSeconds(m_pFromTrack, mixxx::CueType::Outro, true);
-    const double introStart = cueSeconds(m_pToTrack, mixxx::CueType::Intro, false);
-    const double introEnd = cueSeconds(m_pToTrack, mixxx::CueType::Intro, true);
-    double length = 16 * beat;
-    if (outroStart >= 0 && outroEnd > outroStart) {
-        length = outroEnd - outroStart;
-    } else if (introStart >= 0 && introEnd > introStart) {
-        length = introEnd - introStart;
-    }
-    t.length = std::clamp(length, 4.0, 32.0);
-    if (outroStart >= 0 && outroStart < durationA) {
-        t.fromTrigger = outroStart;
-    } else {
-        t.fromTrigger = snapToBeat(m_pFromTrack, std::max(0.0, durationA - t.length - 16 * beat));
-    }
-    if (introStart >= 0) {
-        t.toStart = introStart;
-    } else {
-        const mixxx::BeatsPointer pBeats = m_pToTrack->getBeats();
-        const double sampleRate = m_pToTrack->getSampleRate();
-        t.toStart = (pBeats && sampleRate > 0 && pBeats->firstBeat().isValid())
-                ? pBeats->firstBeat().value() / sampleRate
-                : 0.0;
-    }
-    t.tempoMode = (bpmA > 0 && bpmB > 0) ? MixTransition::TempoMode::KeepA
-                                         : MixTransition::TempoMode::Off;
-    t.tempoRamp = true;
-    return t;
+    const bool running = m_pPlayer && m_pPlayer->isRunning();
+    m_pReset->setEnabled(m_pEditor->isSaved());
+    m_pStatus->setText(running                    ? tr("Mixing...")
+                    : m_pEditor->isSaving()       ? tr("Saving...")
+                    : m_pEditor->isSaved()        ? tr("Saved")
+                                                  : tr("Suggested"));
+    const int seconds = static_cast<int>(t.fromTrigger);
+    m_pHint->setText(m_pEditor->editMode()
+                    ? tr("Drag the shaded region's edges; click inside to add points, "
+                         "right-click to delete.")
+                    : tr("Mixes out of A at %1:%2.")
+                              .arg(seconds / 60)
+                              .arg(seconds % 60, 2, 10, QChar('0')));
+    m_updating = false;
 }

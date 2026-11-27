@@ -9,6 +9,7 @@
 #include "library/analysis/analysisfeature.h"
 #include "library/autodj/autodjfeature.h"
 #include "library/autodj/mix/mixtransition.h"
+#include "library/autodj/mix/mixtransitioneditor.h"
 #include "library/autodj/mix/mixtransitionplayer.h"
 #include "library/banshee/bansheefeature.h"
 #include "library/browse/browsefeature.h"
@@ -78,7 +79,8 @@ Library::Library(
           m_pCrateFeature(nullptr),
           m_pAnalysisFeature(nullptr),
           m_pMixTransitionStore(new MixTransitionStore(pConfig, this)),
-          m_pMixTransitionPlayer(nullptr) {
+          m_pMixTransitionPlayer(nullptr),
+          m_pMixTransitionEditor(nullptr) {
     qRegisterMetaType<LibraryRemovalType>("LibraryRemovalType");
 
     m_pKeyNotation.reset(
@@ -106,6 +108,7 @@ Library::Library(
     addFeature(new AutoDJFeature(this, m_pConfig, pPlayerManager));
     // After Auto DJ, whose [AutoDJ],enabled control the player watches.
     m_pMixTransitionPlayer = new MixTransitionPlayer(m_pMixTransitionStore, this);
+    m_pMixTransitionEditor = new MixTransitionEditor(m_pConfig, m_pMixTransitionStore, this);
 
     m_pPlaylistFeature = new PlaylistFeature(this, UserSettingsPointer(m_pConfig));
     addFeature(m_pPlaylistFeature);

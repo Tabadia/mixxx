@@ -242,6 +242,31 @@ DlgPrefDeck::DlgPrefDeck(QWidget* parent, UserSettingsPointer pConfig)
     }
     m_pHotcueLatchCheckBox->setChecked(m_pConfig->getValue(
             ConfigKey(kControlsGroup, QStringLiteral("HotcueLatchWhenStopped")), true));
+
+    // Dragging the main waveform: vinyl scratch (stock) or silent move.
+    m_pScratchOnDragCheckBox = new QCheckBox(
+            tr("Dragging the waveform scratches (vinyl sound)"),
+            m_pHotcueLatchCheckBox->parentWidget());
+    m_pScratchOnDragCheckBox->setToolTip(
+            tr("When off, dragging the waveform moves through the track silently:\n"
+               "the deck pauses while you drag and resumes where you let go."));
+    if (QLayout* pLayout = m_pHotcueLatchCheckBox->parentWidget()->layout()) {
+        if (auto* pGrid = qobject_cast<QGridLayout*>(pLayout)) {
+            int row, column, rowSpan, columnSpan;
+            pGrid->getItemPosition(pGrid->indexOf(m_pHotcueLatchCheckBox),
+                    &row,
+                    &column,
+                    &rowSpan,
+                    &columnSpan);
+            pGrid->addWidget(m_pScratchOnDragCheckBox, pGrid->rowCount(), column, 1, columnSpan);
+        } else if (auto* pBox = qobject_cast<QBoxLayout*>(pLayout)) {
+            pBox->insertWidget(pBox->indexOf(m_pHotcueLatchCheckBox) + 1, m_pScratchOnDragCheckBox);
+        } else {
+            pLayout->addWidget(m_pScratchOnDragCheckBox);
+        }
+    }
+    m_pScratchOnDragCheckBox->setChecked(
+            m_pConfig->getValue(ConfigKey("[Waveform]", "ScratchOnDrag"), false));
     connect(checkBoxIntroStartMove,
             &QCheckBox::toggled,
             this,
@@ -559,6 +584,7 @@ void DlgPrefDeck::slotResetToDefaults() {
     slotSetTrackTimeDisplay(kDefaultPositionDisplayType);
 
     m_pHotcueLatchCheckBox->setChecked(true);
+    m_pScratchOnDragCheckBox->setChecked(false);
 
     // Up increases speed.
     checkBoxInvertSpeedSlider->setChecked(kDefaultRateDirectionInverted);
@@ -732,6 +758,8 @@ void DlgPrefDeck::slotApply() {
             ConfigValue(m_bSetIntroStartAtMainCue));
     m_pConfig->setValue(ConfigKey(kControlsGroup, QStringLiteral("HotcueLatchWhenStopped")),
             m_pHotcueLatchCheckBox->isChecked());
+    m_pConfig->setValue(ConfigKey("[Waveform]", "ScratchOnDrag"),
+            m_pScratchOnDragCheckBox->isChecked());
 
     double timeDisplay = static_cast<double>(m_timeDisplayMode);
     m_pConfig->set(ConfigKey(kControlsGroup, QStringLiteral("PositionDisplay")),
