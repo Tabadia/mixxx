@@ -57,7 +57,7 @@
             <SetVariable name="Size">74f,20f</SetVariable>
             <SetVariable name="state_0_text">Transition</SetVariable>
             <SetVariable name="state_1_text">Transition</SetVariable>
-            <SetVariable name="ConfigKey">[Modern],show_transition_panel</SetVariable>
+            <SetVariable name="ConfigKey">[Mix],show</SetVariable>
           </Template>
 
           <Template src="skins:Modern/controls/button_2state_persist.xml">

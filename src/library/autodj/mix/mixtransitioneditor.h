@@ -86,6 +86,10 @@ class MixTransitionEditor : public QObject {
         return m_group;
     }
     bool editMode() const;
+    /// "[Mix],show": when off, nothing transition-related is drawn and the
+    /// waveforms can't be edited. (Firing is controlled by "Armed".)
+    bool isVisible() const;
+    void setVisible(bool visible);
     bool snap() const {
         return m_snap;
     }
@@ -166,6 +170,7 @@ class MixTransitionEditor : public QObject {
     MixLane m_dragLane;
     int m_dragIndex;
 
+    std::unique_ptr<ControlPushButton> m_pShow;
     std::unique_ptr<ControlPushButton> m_pEditMode;
     std::unique_ptr<ControlPushButton> m_pPreview;
     std::unique_ptr<ControlPushButton> m_pMixPoint[2];

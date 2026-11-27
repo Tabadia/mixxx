@@ -74,6 +74,17 @@ MixTransitionEditor::MixTransitionEditor(UserSettingsPointer pConfig,
           m_dragIndex(-1) {
     s_pInstance = this;
 
+    // Master show/hide for everything transition-related on screen (control
+    // bar, waveform regions and lines). Remembered between sessions.
+    m_pShow = std::make_unique<ControlPushButton>(
+            ConfigKey(kMixGroup, QStringLiteral("show")), true, 1.0);
+    m_pShow->setButtonMode(ControlPushButton::TOGGLE);
+    connect(m_pShow.get(), &ControlObject::valueChanged, this, [this](double v) {
+        if (v <= 0 && m_pEditMode && m_pEditMode->get() > 0) {
+            m_pEditMode->set(0.0);
+        }
+        emit changed();
+    });
     m_pEditMode = std::make_unique<ControlPushButton>(
             ConfigKey(kMixGroup, QStringLiteral("edit_mode")));
     m_pEditMode->setButtonMode(ControlPushButton::TOGGLE);
@@ -139,7 +150,15 @@ MixTransitionEditor::~MixTransitionEditor() {
 // ---------------------------------------------------------------------------
 
 bool MixTransitionEditor::editMode() const {
-    return m_pEditMode && m_pEditMode->get() > 0;
+    return isVisible() && m_pEditMode && m_pEditMode->get() > 0;
+}
+
+bool MixTransitionEditor::isVisible() const {
+    return m_pShow && m_pShow->get() > 0;
+}
+
+void MixTransitionEditor::setVisible(bool visible) {
+    m_pShow->set(visible ? 1.0 : 0.0);
 }
 
 void MixTransitionEditor::setEditMode(bool on) {
@@ -421,7 +440,7 @@ MixLane MixTransitionEditor::editableLane(Role r) const {
 
 MixTransitionEditor::Overlay MixTransitionEditor::overlay(const QString& group) const {
     Overlay o;
-    o.role = role(group);
+    o.role = isVisible() ? role(group) : Role::None;
     if (o.role == Role::None) {
         return o;
     }

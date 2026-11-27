@@ -119,6 +119,14 @@ WMixTransitionPanel::WMixTransitionPanel(QWidget* pParent,
     pRow1->addWidget(m_pStatus);
     pRow1->addWidget(m_pReset);
     pRow1->addWidget(m_pArm);
+    auto* pHide = new QPushButton(tr("Hide"), this);
+    pHide->setToolTip(tr("Hide the transition bar and the transition regions on the\n"
+                         "waveforms. Show them again with 'Transition' in the toolbar.\n"
+                         "Saved transitions still fire while Armed is on."));
+    connect(pHide, &QPushButton::clicked, this, [this]() {
+        m_pEditor->setVisible(false);
+    });
+    pRow1->addWidget(pHide);
 
     // --- row 2: mix points from the decks, length, tempo, preview ---
     m_pMixOut = new QPushButton(tr("A out here"), this);
