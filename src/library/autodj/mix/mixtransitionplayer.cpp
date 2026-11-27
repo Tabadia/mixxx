@@ -89,7 +89,7 @@ void MixTransitionPlayer::slotTick() {
         const double now = seconds(deck);
         const double last = m_decks[deck].lastSeconds;
         m_decks[deck].lastSeconds = isPlaying(deck) ? now : -1.0;
-        if (autoDJ || !m_pStore->isEnabled() || !isPlaying(deck) || last < 0) {
+        if (autoDJ || !m_pStore->isActive() || !isPlaying(deck) || last < 0) {
             continue;
         }
         const int other = 1 - deck;

@@ -133,6 +133,13 @@ AutoDJProcessor::AutoDJProcessor(
     m_pAutoDJTableModel->selectPlaylist(iAutoDJPlaylistId);
     m_pAutoDJTableModel->select();
 
+    // Saved transitions edited, armed/disarmed or switched off: recalculate
+    // the pending transition (falls back to the regular fade when inactive).
+    connect(m_pMixStore,
+            &MixTransitionStore::transitionsChanged,
+            this,
+            &AutoDJProcessor::refreshTransition);
+
     connect(&m_shufflePlaylist,
             &ControlPushButton::valueChanged,
             this,
@@ -1548,7 +1555,7 @@ bool AutoDJProcessor::applyMixTransition(DeckAttributes* pFromDeck,
         double fromDeckPosition,
         double toDeckOutroStartSecond) {
     pFromDeck->mixTransition.reset();
-    if (!m_pMixStore->isEnabled()) {
+    if (!m_pMixStore->isActive()) {
         return false;
     }
     const TrackPointer pFromTrack = pFromDeck->getLoadedTrack();

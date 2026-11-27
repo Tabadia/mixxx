@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "control/controlobject.h"
 #include "control/controlproxy.h"
 #include "moc_mixtransition.cpp"
 #include "track/track.h"
@@ -275,6 +276,17 @@ void MixTransitionStore::remove(TrackId fromId, TrackId toId) {
 
 bool MixTransitionStore::isEnabled() const {
     return m_pConfig->getValue(kMixEnabledKey, true);
+}
+
+bool MixTransitionStore::isActive() const {
+    if (!isEnabled()) {
+        return false;
+    }
+    // Looked up on use: the control is created after the store.
+    const ControlObject* pShow = ControlObject::getControl(
+            ConfigKey(QStringLiteral("[Mix]"), QStringLiteral("show")),
+            ControlFlag::AllowMissingOrInvalid);
+    return !pShow || pShow->get() > 0;
 }
 
 void MixTransitionStore::setEnabled(bool enabled) {

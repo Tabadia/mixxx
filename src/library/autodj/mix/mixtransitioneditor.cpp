@@ -83,6 +83,8 @@ MixTransitionEditor::MixTransitionEditor(UserSettingsPointer pConfig,
         if (v <= 0 && m_pEditMode && m_pEditMode->get() > 0) {
             m_pEditMode->set(0.0);
         }
+        // Lets Auto DJ recalculate the pending transition (saved vs. normal).
+        emit m_pStore->transitionsChanged();
         emit changed();
     });
     m_pEditMode = std::make_unique<ControlPushButton>(

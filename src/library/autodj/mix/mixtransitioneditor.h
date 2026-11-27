@@ -86,8 +86,9 @@ class MixTransitionEditor : public QObject {
         return m_group;
     }
     bool editMode() const;
-    /// "[Mix],show": when off, nothing transition-related is drawn and the
-    /// waveforms can't be edited. (Firing is controlled by "Armed".)
+    /// "[Mix],show" (toolbar "Transition"): the master switch. When off,
+    /// nothing transition-related is drawn or editable and saved transitions
+    /// don't fire (see MixTransitionStore::isActive()).
     bool isVisible() const;
     void setVisible(bool visible);
     bool snap() const {

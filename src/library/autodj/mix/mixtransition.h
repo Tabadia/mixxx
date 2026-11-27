@@ -96,6 +96,10 @@ class MixTransitionStore : public QObject {
     /// triggered, neither by hand nor by Auto DJ.
     bool isEnabled() const;
     void setEnabled(bool enabled);
+    /// True when saved transitions should fire: the "Transition" master
+    /// switch ([Mix],show) is on and the transitions are armed. When false,
+    /// mixing (by hand and Auto DJ) behaves like stock Mixxx.
+    bool isActive() const;
 
   signals:
     void transitionsChanged();

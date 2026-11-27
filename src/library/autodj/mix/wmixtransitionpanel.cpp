@@ -120,9 +120,9 @@ WMixTransitionPanel::WMixTransitionPanel(QWidget* pParent,
     pRow1->addWidget(m_pReset);
     pRow1->addWidget(m_pArm);
     auto* pHide = new QPushButton(tr("Hide"), this);
-    pHide->setToolTip(tr("Hide the transition bar and the transition regions on the\n"
-                         "waveforms. Show them again with 'Transition' in the toolbar.\n"
-                         "Saved transitions still fire while Armed is on."));
+    pHide->setToolTip(tr("Turn transitions off: hides this bar and the regions on the\n"
+                         "waveforms, and saved transitions stop firing (mixing works\n"
+                         "like normal). Turn back on with 'Transition' in the toolbar."));
     connect(pHide, &QPushButton::clicked, this, [this]() {
         m_pEditor->setVisible(false);
     });
